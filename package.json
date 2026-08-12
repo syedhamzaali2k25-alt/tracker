@@ -1,0 +1,23 @@
+{
+  "name": "margin-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Margin diagnostic and price/cost sync between Shopify and Google Sheets.",
+  "type": "module",
+  "scripts": {
+    "diagnostic": "tsx src/pipeline/runDiagnostic.ts",
+    "preview": "tsx src/pipeline/previewChanges.ts",
+    "apply": "tsx src/pipeline/applyChanges.ts",
+    "undo": "tsx src/pipeline/undo.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "googleapis": "^174.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
