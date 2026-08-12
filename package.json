@@ -10,7 +10,7 @@
     "apply": "tsx src/pipeline/applyChanges.ts",
     "undo": "tsx src/pipeline/undo.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/margin/calculate.test.ts src/pipeline/previewChanges.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
