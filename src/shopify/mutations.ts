@@ -16,7 +16,7 @@ const PRODUCT_VARIANTS_BULK_UPDATE = /* GraphQL */ `
 `;
 
 const INVENTORY_ITEM_UPDATE = /* GraphQL */ `
-  mutation InventoryItemUpdate($id: ID!, $input: InventoryItemUpdateInput!) {
+  mutation InventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
     inventoryItemUpdate(id: $id, input: $input) {
       inventoryItem {
         id
