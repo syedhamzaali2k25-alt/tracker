@@ -26,6 +26,8 @@ async function main() {
     productId: e.productId,
     variantId: e.variantId,
     inventoryItemId: e.inventoryItemId,
+    productTitle: e.productTitle,
+    variantTitle: e.variantTitle,
     price: e.currentPrice,
     cost: e.currentCost,
   }));

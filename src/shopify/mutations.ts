@@ -59,7 +59,8 @@ export interface PriceUpdate {
 
 export interface CostUpdate {
   inventoryItemId: string;
-  cost: number;
+  /** null requests clearing the cost back to "not recorded". */
+  cost: number | null;
 }
 
 function assertNoErrors(operation: string, userErrors: UserError[]): void {
@@ -67,6 +68,16 @@ function assertNoErrors(operation: string, userErrors: UserError[]): void {
     const details = userErrors.map((e) => `${(e.field ?? []).join(".")}: ${e.message}`).join("; ");
     throw new Error(`${operation} failed: ${details}`);
   }
+}
+
+/**
+ * Shopify's InventoryItemInput.cost is nullable, so sending an explicit
+ * `null` is the correct way to ask for a clear. We don't just trust that it
+ * worked, though — the mutation's own response tells us whether the clear
+ * actually took effect.
+ */
+export function costClearFailed(requestedCost: number | null, resultingAmount: string | null): boolean {
+  return requestedCost === null && resultingAmount !== null;
 }
 
 export async function applyPriceUpdates(updates: PriceUpdate[]): Promise<void> {
@@ -89,12 +100,22 @@ export async function applyPriceUpdates(updates: PriceUpdate[]): Promise<void> {
   }
 }
 
-export async function applyCostUpdates(updates: CostUpdate[]): Promise<void> {
+/** Returns the inventoryItemIds where a requested clear-to-null did not take effect. */
+export async function applyCostUpdates(updates: CostUpdate[]): Promise<string[]> {
+  const failedClears: string[] = [];
+
   for (const update of updates) {
     const data = await shopifyGraphQL<InventoryItemUpdateResponse>(INVENTORY_ITEM_UPDATE, {
       id: update.inventoryItemId,
-      input: { cost: update.cost.toFixed(2) },
+      input: { cost: update.cost === null ? null : update.cost.toFixed(2) },
     });
     assertNoErrors("inventoryItemUpdate", data.inventoryItemUpdate.userErrors);
+
+    const resultingAmount = data.inventoryItemUpdate.inventoryItem?.unitCost?.amount ?? null;
+    if (costClearFailed(update.cost, resultingAmount)) {
+      failedClears.push(update.inventoryItemId);
+    }
   }
+
+  return failedClears;
 }
