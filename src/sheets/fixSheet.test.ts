@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isValidVariantId, parseFixRow } from "./fixSheet.js";
+import { isValidVariantId, parseFixRow, parseNumber } from "./fixSheet.js";
 
 function row(overrides: Partial<{
   productTitle: string;
@@ -71,4 +71,40 @@ test("parseFixRow skips a row with a blank variant ID (shifted/deleted row)", ()
 
   assert.equal(entry, null);
   assert.match(warning!, /Grey Hoodie/);
+});
+
+test("parseNumber handles comma thousands separators", () => {
+  assert.equal(parseNumber("1,150"), 1150);
+});
+
+test("parseNumber strips a currency prefix", () => {
+  assert.equal(parseNumber("PKR 1150"), 1150);
+});
+
+test("parseNumber trims stray whitespace", () => {
+  assert.equal(parseNumber(" 1150 "), 1150);
+});
+
+test("parseNumber treats an empty cell as null, not 0", () => {
+  assert.equal(parseNumber(""), null);
+  assert.equal(parseNumber(undefined), null);
+});
+
+test("parseNumber rejects garbage instead of treating it as 0", () => {
+  assert.equal(parseNumber("abc"), null);
+});
+
+test("parseFixRow skips a row whose Current Price isn't a valid number", () => {
+  const { entry, warning } = parseFixRow(row({ currentPrice: "abc", productTitle: "Red Cap" }));
+
+  assert.equal(entry, null);
+  assert.match(warning!, /Red Cap/);
+  assert.match(warning!, /Current Price/);
+});
+
+test("parseFixRow accepts a formatted Current Price", () => {
+  const { entry, warning } = parseFixRow(row({ currentPrice: "PKR 1,150" }));
+
+  assert.equal(warning, null);
+  assert.equal(entry!.currentPrice, 1150);
 });

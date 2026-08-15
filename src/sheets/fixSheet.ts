@@ -13,9 +13,20 @@ export interface FixEntry {
   newCost: number | null;
 }
 
-function parseNumber(value: string | undefined): number | null {
-  if (value === undefined || value === "") return null;
-  const num = Number(value);
+/**
+ * Sheet cells can carry formatting a human typed in — "1,150", "PKR 1150",
+ * stray spaces — none of which Number() parses. Strip everything except
+ * digits, a decimal point, and a leading minus, then convert. Garbage that
+ * strips down to nothing (e.g. "abc") must stay null rather than fall
+ * through to Number("") === 0, which would silently look like a real price.
+ */
+export function parseNumber(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") return null;
+
+  const stripped = value.replace(/[^0-9.-]/g, "");
+  if (stripped === "" || stripped === "-" || stripped === ".") return null;
+
+  const num = Number(stripped);
   return Number.isNaN(num) ? null : num;
 }
 
@@ -52,11 +63,22 @@ export function parseFixRow(row: string[]): ParsedFixRow {
     };
   }
 
+  const currentPrice = parseNumber(row[3]);
+  if (currentPrice === null) {
+    return {
+      entry: null,
+      warning:
+        `Skipping "${productTitle || "(unnamed row)"}" — its Current Price ` +
+        `("${row[3] || "blank"}") isn't a valid number. Fix that cell, or re-run the diagnostic ` +
+        "to refresh it.",
+    };
+  }
+
   return {
     entry: {
       productTitle,
       variantTitle: row[1] ?? "",
-      currentPrice: Number(row[3]),
+      currentPrice,
       currentCost: parseNumber(row[4]),
       newPrice: parseNumber(row[5]),
       newCost: parseNumber(row[6]),
