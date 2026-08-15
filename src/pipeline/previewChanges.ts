@@ -66,10 +66,18 @@ export function printPreview(preview: ChangePreview): void {
   }
 }
 
-async function main() {
+export async function buildPreviewFromSheet(
+  onProgress?: (message: string) => void,
+): Promise<ChangePreview> {
+  const report = onProgress ?? (() => {});
+  report("Reading the Fix tab...");
   const entries = await readFixEntries();
   const changed = changedEntries(entries);
-  const preview = buildPreview(changed);
+  return buildPreview(changed);
+}
+
+async function main() {
+  const preview = await buildPreviewFromSheet((message) => console.log(message));
   printPreview(preview);
 }
 

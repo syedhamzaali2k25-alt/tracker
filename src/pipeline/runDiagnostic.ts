@@ -2,30 +2,53 @@ import { config } from "../config.js";
 import { calculateMarginRows, summarize } from "../margin/calculate.js";
 import { fetchAllVariants, fetchUnitsSoldByVariant } from "../shopify/queries.js";
 import { writeDiagnostic } from "../sheets/diagnosticSheet.js";
+import type { DiagnosticSummary, MarginRow } from "../types.js";
 
-async function main() {
-  console.log(`Fetching products and variants from ${config.shopify.shop}...`);
+export interface DiagnosticResult {
+  rows: MarginRow[];
+  summary: DiagnosticSummary;
+}
+
+/**
+ * Fetches Shopify data and computes margins. Deliberately does not touch
+ * Google Sheets — the app's dashboard needs to show these numbers with
+ * Sheets completely disconnected. Sheet writing is a separate step (see the
+ * CLI wrapper below, and the app's own "Create sheet" action).
+ */
+export async function runDiagnostic(
+  onProgress?: (message: string) => void,
+): Promise<DiagnosticResult> {
+  const report = onProgress ?? (() => {});
+
+  report(`Fetching products and variants from ${config.shopify.shop}...`);
   const variants = await fetchAllVariants();
-  console.log(`Found ${variants.length} variants.`);
+  report(`Found ${variants.length} variants.`);
 
-  console.log(`Fetching orders from the last ${config.lookbackDays} days...`);
+  report(`Fetching orders from the last ${config.lookbackDays} days...`);
   const sales = await fetchUnitsSoldByVariant(config.lookbackDays);
 
   const rows = calculateMarginRows(variants, sales, config.lowMarginThreshold);
   const summary = summarize(rows);
 
-  console.log(`${summary.lowMarginCount} products below ${config.lowMarginThreshold * 100}% margin.`);
-  console.log(
+  report(`${summary.lowMarginCount} products below ${config.lowMarginThreshold * 100}% margin.`);
+  report(
     `${summary.belowCostCount} products below cost — ${summary.belowCostLoss.toFixed(2)} ${summary.currencyCode} lost in the last ${config.lookbackDays} days.`,
   );
-  console.log(`${summary.noCostCount} products have no cost recorded.`);
+  report(`${summary.noCostCount} products have no cost recorded.`);
 
-  console.log("Writing to Google Sheet...");
+  return { rows, summary };
+}
+
+async function main() {
+  const report = (message: string) => console.log(message);
+  const { rows, summary } = await runDiagnostic(report);
+
+  report("Writing to Google Sheet...");
   const { preservedCount } = await writeDiagnostic(rows, summary);
   if (preservedCount > 0) {
-    console.log(`Preserved ${preservedCount} pending edits from the Fix tab.`);
+    report(`Preserved ${preservedCount} pending edits from the Fix tab.`);
   }
-  console.log("Done. Diagnostic and Fix tabs updated.");
+  report("Done. Diagnostic and Fix tabs updated.");
 }
 
 main().catch((error) => {
