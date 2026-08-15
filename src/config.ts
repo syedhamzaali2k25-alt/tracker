@@ -1,4 +1,13 @@
-import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
+
+// dotenv/config's default behavior loads .env from process.cwd(), which is
+// wrong when this module is imported from the app/ project (cwd is app/,
+// not the repo root). Resolve the root .env relative to this file instead,
+// so it's found regardless of which project imports config.ts.
+const repoRootEnvPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
+dotenv.config({ path: repoRootEnvPath });
 
 function required(name: string): string {
   const value = process.env[name];
