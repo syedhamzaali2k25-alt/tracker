@@ -1,5 +1,6 @@
 import type { DiagnosticSummary, MarginRow } from "../types.js";
 import { clearRange, ensureTab, writeRange } from "./client.js";
+import { buildPendingEditsMap, readFixEntries, type PendingEdit } from "./fixSheet.js";
 
 export const DIAGNOSTIC_TAB = "Diagnostic";
 export const FIX_TAB = "Fix";
@@ -68,24 +69,42 @@ function diagnosticDataRow(row: MarginRow): (string | number)[] {
   ];
 }
 
-function fixDataRow(row: MarginRow): (string | number)[] {
+function fixDataRow(row: MarginRow, pending: PendingEdit | undefined): (string | number)[] {
   return [
     row.productTitle,
     row.variantTitle,
     row.sku,
     row.price,
     row.cost ?? "",
-    "",
-    "",
+    pending?.newPrice ?? "",
+    pending?.newCost ?? "",
     row.productId,
     row.variantId,
     row.inventoryItemId,
   ];
 }
 
-export async function writeDiagnostic(rows: MarginRow[], summary: DiagnosticSummary): Promise<void> {
+export function buildFixRows(
+  rows: MarginRow[],
+  pendingEdits: Map<string, PendingEdit>,
+): { values: (string | number)[][]; preservedCount: number } {
+  let preservedCount = 0;
+  const values = rows.map((row) => {
+    const pending = pendingEdits.get(row.variantId);
+    if (pending) preservedCount += 1;
+    return fixDataRow(row, pending);
+  });
+  return { values, preservedCount };
+}
+
+export async function writeDiagnostic(
+  rows: MarginRow[],
+  summary: DiagnosticSummary,
+): Promise<{ preservedCount: number }> {
   await ensureTab(DIAGNOSTIC_TAB);
   await ensureTab(FIX_TAB);
+
+  const pendingEdits = buildPendingEditsMap(await readFixEntries());
 
   await clearRange(`${DIAGNOSTIC_TAB}!A1:Z10000`);
   const diagnosticValues = [
@@ -95,7 +114,10 @@ export async function writeDiagnostic(rows: MarginRow[], summary: DiagnosticSumm
   ];
   await writeRange(`${DIAGNOSTIC_TAB}!A1`, diagnosticValues);
 
+  const { values: fixDataRows, preservedCount } = buildFixRows(rows, pendingEdits);
   await clearRange(`${FIX_TAB}!A1:Z10000`);
-  const fixValues = [FIX_HEADER, ...rows.map(fixDataRow)];
+  const fixValues = [FIX_HEADER, ...fixDataRows];
   await writeRange(`${FIX_TAB}!A1`, fixValues);
+
+  return { preservedCount };
 }

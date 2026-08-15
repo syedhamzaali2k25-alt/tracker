@@ -21,7 +21,10 @@ async function main() {
   console.log(`${summary.noCostCount} products have no cost recorded.`);
 
   console.log("Writing to Google Sheet...");
-  await writeDiagnostic(rows, summary);
+  const { preservedCount } = await writeDiagnostic(rows, summary);
+  if (preservedCount > 0) {
+    console.log(`Preserved ${preservedCount} pending edits from the Fix tab.`);
+  }
   console.log("Done. Diagnostic and Fix tabs updated.");
 }
 

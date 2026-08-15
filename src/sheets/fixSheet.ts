@@ -44,3 +44,18 @@ export function changedEntries(entries: FixEntry[]): FixEntry[] {
       (e.newCost !== null && e.newCost !== e.currentCost),
   );
 }
+
+export interface PendingEdit {
+  newPrice: number | null;
+  newCost: number | null;
+}
+
+export function buildPendingEditsMap(entries: FixEntry[]): Map<string, PendingEdit> {
+  const map = new Map<string, PendingEdit>();
+  for (const entry of entries) {
+    if (entry.newPrice !== null || entry.newCost !== null) {
+      map.set(entry.variantId, { newPrice: entry.newPrice, newCost: entry.newCost });
+    }
+  }
+  return map;
+}
