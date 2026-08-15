@@ -92,7 +92,9 @@ async function main() {
   report("Done. Run `npm run undo` if you need to restore the previous prices/costs.");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
