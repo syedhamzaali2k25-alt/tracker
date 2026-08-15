@@ -86,3 +86,28 @@ src/
 - Multi-merchant OAuth / hosting — this targets a single store via a static
   access token, matching the recommended first step of building the
   single-store diagnostic before a real installable app.
+
+## The `app/` directory
+
+`app/` is a separate npm project: Shopify's official React Router app
+template (`shopify-app-template-react-router`), fetched directly rather than
+through `shopify app init` since that command requires an interactive login
+to a Shopify Partner/organization account. It has its own `package.json`,
+`tsconfig.json`, and dependencies — it does not share this root project's
+`npm install` or `npm test`.
+
+The margin/Shopify/Sheets logic in `src/` is reused from inside `app/` via a
+`~lib/*` path alias (`app/tsconfig.json`) pointing at `../src/*`, rather than
+being duplicated. `src/margin`, `src/shopify`, and `src/sheets` haven't been
+touched or restructured for this yet — that comes in a later step that turns
+the CLI pipeline scripts into functions the app's routes can call directly.
+
+To work on it:
+
+```bash
+cd app
+npm install   # already done once during scaffolding, but harmless to rerun
+npm run dev   # runs `shopify app dev` — requires you to be logged into
+              # your Shopify Partner account; it will prompt to log in
+              # and to link this project to an app in your organization
+```
