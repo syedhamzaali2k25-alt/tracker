@@ -17,7 +17,7 @@ export const config = {
       return required("SHOPIFY_ACCESS_TOKEN");
     },
     get apiVersion() {
-      return process.env.SHOPIFY_API_VERSION ?? "2024-10";
+      return process.env.SHOPIFY_API_VERSION ?? "2026-07";
     },
   },
   google: {
