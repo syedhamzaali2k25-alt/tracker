@@ -108,3 +108,25 @@ test("parseFixRow accepts a formatted Current Price", () => {
   assert.equal(warning, null);
   assert.equal(entry!.currentPrice, 1150);
 });
+
+test("parseNumber resolves US-style (comma thousands, dot decimal) and European-style (dot thousands, comma decimal) to the same value", () => {
+  assert.equal(parseNumber("1,150.50"), 1150.5);
+  assert.equal(parseNumber("1.150,50"), 1150.5);
+  assert.equal(parseNumber("1,150.50"), parseNumber("1.150,50"));
+});
+
+test("parseNumber handles multiple thousands groups regardless of which symbol groups them", () => {
+  assert.equal(parseNumber("1,150,000.50"), 1150000.5);
+  assert.equal(parseNumber("1.150.000,50"), 1150000.5);
+});
+
+test("parseNumber treats accounting-style parentheses as negative", () => {
+  assert.equal(parseNumber("(500)"), -500);
+  assert.equal(parseNumber("(1,150.50)"), -1150.5);
+});
+
+test("parseNumber does not confuse a lone thousands comma with a decimal comma", () => {
+  // No dot present, so the comma stays a thousands separator, matching the
+  // existing "1,150" -> 1150 behavior rather than being reinterpreted as 1.15.
+  assert.equal(parseNumber("1,150"), 1150);
+});

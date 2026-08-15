@@ -15,19 +15,51 @@ export interface FixEntry {
 
 /**
  * Sheet cells can carry formatting a human typed in — "1,150", "PKR 1150",
- * stray spaces — none of which Number() parses. Strip everything except
- * digits, a decimal point, and a leading minus, then convert. Garbage that
- * strips down to nothing (e.g. "abc") must stay null rather than fall
- * through to Number("") === 0, which would silently look like a real price.
+ * "1.150,50" (European), "(500)" (accounting negative) — none of which
+ * Number() parses. Garbage that strips down to nothing (e.g. "abc") must
+ * stay null rather than fall through to Number("") === 0, which would
+ * silently look like a real price.
  */
 export function parseNumber(value: string | undefined): number | null {
   if (value === undefined || value.trim() === "") return null;
 
-  const stripped = value.replace(/[^0-9.-]/g, "");
-  if (stripped === "" || stripped === "-" || stripped === ".") return null;
+  let text = value.trim();
 
-  const num = Number(stripped);
-  return Number.isNaN(num) ? null : num;
+  // Accounting-style negative: "(500)" means -500, not 500.
+  const parenMatch = /^\((.*)\)$/.exec(text);
+  const isNegative = parenMatch !== null;
+  if (parenMatch) {
+    text = parenMatch[1];
+  }
+
+  // Strip currency symbols, letters, and spaces — keep digits, ",", ".", "-".
+  let cleaned = text.replace(/[^0-9,.-]/g, "");
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+
+  if (lastComma !== -1 && lastDot !== -1) {
+    // Both separators appear ("1,150.50" or "1.150,50"): whichever is
+    // rightmost is the decimal point; every occurrence of the other
+    // character is a thousands separator and gets dropped.
+    const decimalIsComma = lastComma > lastDot;
+    const thousandsChar = decimalIsComma ? "." : ",";
+    cleaned = cleaned.split(thousandsChar).join("");
+    if (decimalIsComma) {
+      cleaned = cleaned.replace(",", ".");
+    }
+  } else if (lastComma !== -1) {
+    // Only commas present: thousands separators, e.g. "1,150" -> 1150.
+    cleaned = cleaned.split(",").join("");
+  }
+  // Only a dot, or no separator at all: already the correct decimal form.
+
+  if (cleaned === "" || cleaned === "-" || cleaned === ".") return null;
+
+  const num = Number(cleaned);
+  if (Number.isNaN(num)) return null;
+
+  return isNegative ? -Math.abs(num) : num;
 }
 
 const VALID_VARIANT_ID_PREFIX = "gid://shopify/ProductVariant/";
