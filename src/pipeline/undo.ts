@@ -1,5 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import type { ShopContext } from "../shopify/client.js";
+import { getDevShopContext } from "../shopify/devShopContext.js";
 import { applyCostUpdates, applyPriceUpdates } from "../shopify/mutations.js";
 import { loadLatestBackup, markBackupApplied, type BackupEntry } from "./backup.js";
 
@@ -19,7 +21,10 @@ function describeVariant(entries: BackupEntry[], inventoryItemId: string): strin
  * responsible for confirming first. Throws if there's no pending backup to
  * restore, since there's no sensible zero-value result to hand back.
  */
-export async function undoLatest(onProgress?: (message: string) => void): Promise<UndoResult> {
+export async function undoLatest(
+  shopContext: ShopContext,
+  onProgress?: (message: string) => void,
+): Promise<UndoResult> {
   const report = onProgress ?? (() => {});
 
   const backup = await loadLatestBackup();
@@ -40,10 +45,10 @@ export async function undoLatest(onProgress?: (message: string) => void): Promis
   }));
 
   report(`Restoring ${priceUpdates.length} price(s)...`);
-  await applyPriceUpdates(priceUpdates);
+  await applyPriceUpdates(shopContext, priceUpdates);
 
   report(`Restoring ${costUpdates.length} cost(s)...`);
-  const failedClears = await applyCostUpdates(costUpdates);
+  const failedClears = await applyCostUpdates(shopContext, costUpdates);
   if (failedClears.length > 0) {
     const names = failedClears.map((id) => describeVariant(backup.entries, id)).join(", ");
     report(
@@ -67,6 +72,7 @@ async function confirmInCli(prompt: string): Promise<boolean> {
 
 async function main() {
   const report = (message: string) => console.log(message);
+  const shopContext = getDevShopContext();
 
   // Peek at the backup before asking to confirm, so the prompt can say what
   // it's about to restore. undoLatest() re-reads it — a second cheap local
@@ -87,7 +93,7 @@ async function main() {
     return;
   }
 
-  await undoLatest(report);
+  await undoLatest(shopContext, report);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

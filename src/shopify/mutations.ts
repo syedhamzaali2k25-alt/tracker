@@ -1,4 +1,4 @@
-import { shopifyGraphQL } from "./client.js";
+import { shopifyGraphQL, type ShopContext } from "./client.js";
 
 const PRODUCT_VARIANTS_BULK_UPDATE = /* GraphQL */ `
   mutation ProductVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -80,7 +80,10 @@ export function costClearFailed(requestedCost: number | null, resultingAmount: s
   return requestedCost === null && resultingAmount !== null;
 }
 
-export async function applyPriceUpdates(updates: PriceUpdate[]): Promise<void> {
+export async function applyPriceUpdates(
+  shopContext: ShopContext,
+  updates: PriceUpdate[],
+): Promise<void> {
   const byProduct = new Map<string, PriceUpdate[]>();
   for (const update of updates) {
     const group = byProduct.get(update.productId) ?? [];
@@ -90,6 +93,7 @@ export async function applyPriceUpdates(updates: PriceUpdate[]): Promise<void> {
 
   for (const [productId, group] of byProduct) {
     const data = await shopifyGraphQL<ProductVariantsBulkUpdateResponse>(
+      shopContext,
       PRODUCT_VARIANTS_BULK_UPDATE,
       {
         productId,
@@ -101,14 +105,21 @@ export async function applyPriceUpdates(updates: PriceUpdate[]): Promise<void> {
 }
 
 /** Returns the inventoryItemIds where a requested clear-to-null did not take effect. */
-export async function applyCostUpdates(updates: CostUpdate[]): Promise<string[]> {
+export async function applyCostUpdates(
+  shopContext: ShopContext,
+  updates: CostUpdate[],
+): Promise<string[]> {
   const failedClears: string[] = [];
 
   for (const update of updates) {
-    const data = await shopifyGraphQL<InventoryItemUpdateResponse>(INVENTORY_ITEM_UPDATE, {
-      id: update.inventoryItemId,
-      input: { cost: update.cost === null ? null : update.cost.toFixed(2) },
-    });
+    const data = await shopifyGraphQL<InventoryItemUpdateResponse>(
+      shopContext,
+      INVENTORY_ITEM_UPDATE,
+      {
+        id: update.inventoryItemId,
+        input: { cost: update.cost === null ? null : update.cost.toFixed(2) },
+      },
+    );
     assertNoErrors("inventoryItemUpdate", data.inventoryItemUpdate.userErrors);
 
     const resultingAmount = data.inventoryItemUpdate.inventoryItem?.unitCost?.amount ?? null;

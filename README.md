@@ -9,15 +9,22 @@ GraphQL queries and sheet layout this implements.
 
 ## Setup
 
-1. **Shopify custom app** — in your dev store: Settings → Apps and sales
-   channels → Develop apps → Create an app. Grant `read_products`,
-   `read_orders`, `read_inventory`, `write_products`, `write_inventory`, then
-   install it and copy the Admin API access token.
-2. **Google service account** — in Google Cloud Console: create a project,
-   enable the Google Sheets API, create a service account, download its JSON
-   key. Create a Google Sheet and share it with the service account's email
-   (Editor access).
-3. Copy `.env.example` to `.env` and fill in both sets of credentials.
+This root project is now the **CLI-only** path (`npm run diagnostic` /
+`preview` / `apply` / `undo`) — the real installable app with per-shop OAuth
+lives in [`app/`](#the-app-directory) and has its own setup steps.
+
+1. **Shopify custom app** (for the CLI only — the app in `app/` doesn't use
+   this) — in your dev store: Settings → Apps and sales channels → Develop
+   apps → Create an app. Grant `read_products`, `read_orders`,
+   `read_inventory`, `write_products`, `write_inventory`, then install it and
+   copy the Admin API access token.
+2. **Google service account** (used by both the CLI and the app) — in Google
+   Cloud Console: create a project, enable the Google Sheets API, create a
+   service account, download its JSON key. Create a Google Sheet and share it
+   with the service account's email (Editor access).
+3. Copy `.env.example` to `.env`, fill in the Google credentials, and
+   uncomment/fill in `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` if you want to use
+   the CLI.
 4. `npm install`
 
 ## Usage
@@ -76,16 +83,24 @@ src/
     previewChanges.ts            `npm run preview`
     applyChanges.ts               `npm run apply`
     undo.ts                        `npm run undo`
-    backup.ts, confirm.ts          shared helpers
+    backup.ts, devShopContext.ts   shared helpers
 ```
+
+Every Shopify-facing function (`fetchAllVariants`, `applyPriceUpdates`, etc.)
+takes a `ShopContext { shop, accessToken }` as an explicit parameter — there's
+no global "the current shop." The CLI builds one from
+`SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` (`devShopContext.ts`); the app in
+`app/` builds one from the authenticated OAuth session for each request.
 
 ## Not built yet
 
 - Weekly automated re-check + email alert (the "watchman" subscription
-  feature) — this repo is the on-demand CLI version.
-- Multi-merchant OAuth / hosting — this targets a single store via a static
-  access token, matching the recommended first step of building the
-  single-store diagnostic before a real installable app.
+  feature).
+- Google OAuth per merchant — Sheets access still uses a single shared
+  service account and a single `GOOGLE_SHEET_ID`, for both the CLI and the
+  app. Shopify access is now per-shop OAuth (see below); Google isn't yet.
+- History/undo in the app's UI, scheduled re-check, and deployment — see the
+  phase notes in `app/`'s own history for what's planned next.
 
 ## The `app/` directory
 
@@ -98,15 +113,43 @@ to a Shopify Partner/organization account. It has its own `package.json`,
 
 The margin/Shopify/Sheets logic in `src/` is reused from inside `app/` via a
 `~lib/*` path alias (`app/tsconfig.json`) pointing at `../src/*`, rather than
-being duplicated. `src/margin`, `src/shopify`, and `src/sheets` haven't been
-touched or restructured for this yet — that comes in a later step that turns
-the CLI pipeline scripts into functions the app's routes can call directly.
+being duplicated.
+
+### Authentication
+
+The app authenticates each shop via real OAuth (not the CLI's static
+token) — install flow, session storage, the works. Sessions are stored in
+SQLite via Prisma (`app/prisma/schema.prisma`), wrapped in an encrypting
+layer (`app/app/encrypted-session-storage.server.ts`) so access tokens are
+never written to disk in plaintext. That wrapper needs one more env var in
+`app/.env`:
+
+```bash
+SESSION_ENCRYPTION_KEY=<64 hex chars>
+# generate one with:
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Every route builds a `ShopContext` from `session.shop` /
+`session.accessToken` for that request — never from a global — and that's
+the only place an access token exists in memory outside the encrypted
+session store. It's never logged and never sent to the browser.
+
+### GDPR webhooks
+
+`customers/data_request`, `customers/redact`, and `shop/redact` are wired up
+(`app/app/routes/webhooks.*.tsx`) and declared in `shopify.app.toml`. The
+first two are no-ops — this app never stores customer PII. `shop/redact`
+(and the existing `app/uninstalled` handler) delete that shop's session(s)
+and its cached diagnostic (`app/app/diagnostic-cache.server.ts`, now a
+Prisma model instead of the in-memory Map from earlier phases).
 
 To work on it:
 
 ```bash
 cd app
 npm install   # already done once during scaffolding, but harmless to rerun
+npx prisma migrate dev   # applies the Session + DiagnosticCache migrations
 npm run dev   # runs `shopify app dev` — requires you to be logged into
               # your Shopify Partner account; it will prompt to log in
               # and to link this project to an app in your organization

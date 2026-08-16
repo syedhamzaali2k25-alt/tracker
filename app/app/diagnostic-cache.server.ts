@@ -1,4 +1,5 @@
 import type { DiagnosticSummary, MarginRow } from "~lib/types.js";
+import db from "./db.server";
 
 interface CachedDiagnostic {
   rows: MarginRow[];
@@ -6,19 +7,33 @@ interface CachedDiagnostic {
 }
 
 /**
- * In-memory, per-shop cache of the last diagnostic result, so "Create sheet"
- * can reuse it instead of re-fetching from Shopify or round-tripping the
- * whole row set through the browser as a form field. Deliberately not a
- * database — this is single-process, lost on restart, and not shared across
- * server instances. Fine for now (single static-token shop, per Phase 1);
- * revisit once Phase 2 adds a real per-shop data store.
+ * Per-shop cache of the last diagnostic result, so "Create sheet" can reuse
+ * it instead of re-fetching from Shopify or round-tripping the whole row set
+ * through the browser as a form field. Not sensitive data (product titles,
+ * prices, costs — nothing that needs the encryption sessions get), so a
+ * plain Prisma model is enough; no need for the encrypted-session-storage
+ * treatment here.
  */
-const cache = new Map<string, CachedDiagnostic>();
-
-export function setCachedDiagnostic(shop: string, result: CachedDiagnostic): void {
-  cache.set(shop, result);
+export async function setCachedDiagnostic(
+  shop: string,
+  result: CachedDiagnostic,
+): Promise<void> {
+  const data = JSON.stringify(result);
+  await db.diagnosticCache.upsert({
+    where: { shop },
+    create: { shop, data },
+    update: { data },
+  });
 }
 
-export function getCachedDiagnostic(shop: string): CachedDiagnostic | undefined {
-  return cache.get(shop);
+export async function getCachedDiagnostic(
+  shop: string,
+): Promise<CachedDiagnostic | undefined> {
+  const row = await db.diagnosticCache.findUnique({ where: { shop } });
+  return row ? (JSON.parse(row.data) as CachedDiagnostic) : undefined;
+}
+
+/** Used by the shop/redact GDPR webhook and app/uninstalled to purge a shop's data. */
+export async function deleteCachedDiagnostic(shop: string): Promise<void> {
+  await db.diagnosticCache.deleteMany({ where: { shop } });
 }

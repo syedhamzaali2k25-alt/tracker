@@ -1,5 +1,10 @@
 import { config } from "../config.js";
 
+export interface ShopContext {
+  shop: string;
+  accessToken: string;
+}
+
 export interface ThrottleStatus {
   maximumAvailable: number;
   currentlyAvailable: number;
@@ -27,8 +32,13 @@ const BASE_BACKOFF_MS = 1000;
 // firing the next request so a big query doesn't immediately get throttled.
 const THROTTLE_SAFETY_BUFFER = 250;
 
-/** Persists across calls so a low bucket from one query slows down the next. */
-let lastThrottleStatus: ThrottleStatus | null = null;
+/**
+ * Persists across calls so a low bucket from one query slows down the next
+ * — keyed by shop, since each shop/app pair has its own independent rate
+ * limit bucket. A single shared value here would make one busy shop's
+ * throttle state bleed into another shop's requests.
+ */
+const lastThrottleStatusByShop = new Map<string, ThrottleStatus>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -58,20 +68,23 @@ export function backoffDelayMs(attempt: number, baseMs: number = BASE_BACKOFF_MS
 }
 
 export async function shopifyGraphQL<T>(
+  shopContext: ShopContext,
   query: string,
   variables: Record<string, unknown> = {},
 ): Promise<T> {
-  const url = `https://${config.shopify.shop}/admin/api/${config.shopify.apiVersion}/graphql.json`;
+  const url = `https://${shopContext.shop}/admin/api/${config.shopify.apiVersion}/graphql.json`;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const proactiveWait = msUntilCapacityRestored(lastThrottleStatus);
+    const proactiveWait = msUntilCapacityRestored(
+      lastThrottleStatusByShop.get(shopContext.shop) ?? null,
+    );
     if (proactiveWait > 0) await sleep(proactiveWait);
 
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Shopify-Access-Token": config.shopify.accessToken,
+        "X-Shopify-Access-Token": shopContext.accessToken,
       },
       body: JSON.stringify({ query, variables }),
     });
@@ -94,14 +107,16 @@ export async function shopifyGraphQL<T>(
     const body = (await response.json()) as GraphQLResponse<T>;
 
     if (body.extensions?.cost?.throttleStatus) {
-      lastThrottleStatus = body.extensions.cost.throttleStatus;
+      lastThrottleStatusByShop.set(shopContext.shop, body.extensions.cost.throttleStatus);
     }
 
     if (isThrottledError(body.errors)) {
       if (attempt === MAX_ATTEMPTS) {
         throw new Error(`Shopify GraphQL error: THROTTLED after ${MAX_ATTEMPTS} attempts. Try again later.`);
       }
-      const throttleWait = msUntilCapacityRestored(lastThrottleStatus);
+      const throttleWait = msUntilCapacityRestored(
+        lastThrottleStatusByShop.get(shopContext.shop) ?? null,
+      );
       await sleep(Math.max(backoffDelayMs(attempt), throttleWait));
       continue;
     }

@@ -32,3 +32,14 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+// Last diagnostic result per shop, so "Create sheet" can reuse it instead of
+// re-fetching from Shopify or round-tripping rows through the browser.
+// Replaces an earlier in-memory Map (lost on restart, not shared across
+// instances) now that real per-shop storage exists for OAuth sessions.
+model DiagnosticCache {
+  shop      String   @id
+  // JSON-serialized { rows: MarginRow[], summary: DiagnosticSummary }
+  data      String
+  updatedAt DateTime @updatedAt
+}

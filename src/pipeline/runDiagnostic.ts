@@ -1,5 +1,7 @@
 import { config } from "../config.js";
 import { calculateMarginRows, summarize } from "../margin/calculate.js";
+import type { ShopContext } from "../shopify/client.js";
+import { getDevShopContext } from "../shopify/devShopContext.js";
 import { fetchAllVariants, fetchUnitsSoldByVariant } from "../shopify/queries.js";
 import { writeDiagnostic } from "../sheets/diagnosticSheet.js";
 import type { DiagnosticSummary, MarginRow } from "../types.js";
@@ -16,16 +18,17 @@ export interface DiagnosticResult {
  * CLI wrapper below, and the app's own "Create sheet" action).
  */
 export async function runDiagnostic(
+  shopContext: ShopContext,
   onProgress?: (message: string) => void,
 ): Promise<DiagnosticResult> {
   const report = onProgress ?? (() => {});
 
-  report(`Fetching products and variants from ${config.shopify.shop}...`);
-  const variants = await fetchAllVariants();
+  report(`Fetching products and variants from ${shopContext.shop}...`);
+  const variants = await fetchAllVariants(shopContext);
   report(`Found ${variants.length} variants.`);
 
   report(`Fetching orders from the last ${config.lookbackDays} days...`);
-  const sales = await fetchUnitsSoldByVariant(config.lookbackDays);
+  const sales = await fetchUnitsSoldByVariant(shopContext, config.lookbackDays);
 
   const rows = calculateMarginRows(variants, sales, config.lowMarginThreshold);
   const summary = summarize(rows);
@@ -41,7 +44,8 @@ export async function runDiagnostic(
 
 async function main() {
   const report = (message: string) => console.log(message);
-  const { rows, summary } = await runDiagnostic(report);
+  const shopContext = getDevShopContext();
+  const { rows, summary } = await runDiagnostic(shopContext, report);
 
   report("Writing to Google Sheet...");
   const { preservedCount } = await writeDiagnostic(rows, summary);

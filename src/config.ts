@@ -19,12 +19,9 @@ function required(name: string): string {
 
 export const config = {
   shopify: {
-    get shop() {
-      return required("SHOPIFY_SHOP");
-    },
-    get accessToken() {
-      return required("SHOPIFY_ACCESS_TOKEN");
-    },
+    // No shop/accessToken here by design — those come from per-shop OAuth
+    // sessions now (see src/shopify/client.ts's ShopContext), never from a
+    // single global. apiVersion isn't secret or shop-specific, so it stays.
     get apiVersion() {
       return process.env.SHOPIFY_API_VERSION ?? "2026-07";
     },

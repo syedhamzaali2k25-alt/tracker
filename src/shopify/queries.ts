@@ -1,4 +1,4 @@
-import { shopifyGraphQL } from "./client.js";
+import { shopifyGraphQL, type ShopContext } from "./client.js";
 import type { VariantRow } from "../types.js";
 
 const PRODUCTS_WITH_COST_QUERY = /* GraphQL */ `
@@ -136,12 +136,13 @@ function toVariantRow(productId: string, productTitle: string, raw: RawVariant):
   };
 }
 
-export async function fetchAllVariants(): Promise<VariantRow[]> {
+export async function fetchAllVariants(shopContext: ShopContext): Promise<VariantRow[]> {
   const rows: VariantRow[] = [];
   let cursor: string | null = null;
 
   do {
     const data: ProductsResponse = await shopifyGraphQL<ProductsResponse>(
+      shopContext,
       PRODUCTS_WITH_COST_QUERY,
       { cursor },
     );
@@ -154,10 +155,14 @@ export async function fetchAllVariants(): Promise<VariantRow[]> {
       let variantPageInfo = product.variants.pageInfo;
       while (variantPageInfo.hasNextPage) {
         const page: ProductVariantsPageResponse =
-          await shopifyGraphQL<ProductVariantsPageResponse>(PRODUCT_VARIANTS_PAGE_QUERY, {
-            productId: product.id,
-            cursor: variantPageInfo.endCursor,
-          });
+          await shopifyGraphQL<ProductVariantsPageResponse>(
+            shopContext,
+            PRODUCT_VARIANTS_PAGE_QUERY,
+            {
+              productId: product.id,
+              cursor: variantPageInfo.endCursor,
+            },
+          );
 
         for (const variant of page.product.variants.nodes) {
           rows.push(toVariantRow(product.id, product.title, variant));
@@ -194,6 +199,7 @@ export interface VariantSales {
 }
 
 export async function fetchUnitsSoldByVariant(
+  shopContext: ShopContext,
   lookbackDays: number,
 ): Promise<Map<string, VariantSales>> {
   const since = new Date();
@@ -204,10 +210,14 @@ export async function fetchUnitsSoldByVariant(
   let cursor: string | null = null;
 
   do {
-    const data: OrdersResponse = await shopifyGraphQL<OrdersResponse>(RECENT_ORDERS_QUERY, {
-      cursor,
-      since: sinceQuery,
-    });
+    const data: OrdersResponse = await shopifyGraphQL<OrdersResponse>(
+      shopContext,
+      RECENT_ORDERS_QUERY,
+      {
+        cursor,
+        since: sinceQuery,
+      },
+    );
 
     for (const order of data.orders.nodes) {
       if (order.cancelledAt) continue;

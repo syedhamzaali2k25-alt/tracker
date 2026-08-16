@@ -17,6 +17,7 @@ import { applyChanges, type ApplyChangesResult } from "~lib/pipeline/applyChange
 import { writeDiagnostic } from "~lib/sheets/diagnosticSheet.js";
 import type { FixEntry } from "~lib/sheets/fixSheet.js";
 import { config } from "~lib/config.js";
+import type { ShopContext } from "~lib/shopify/client.js";
 import type { DiagnosticSummary, MarginRow } from "~lib/types.js";
 import { getCachedDiagnostic, setCachedDiagnostic } from "../diagnostic-cache.server";
 
@@ -24,6 +25,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
   return null;
 };
+
+/** authenticate.admin() always returns an active session with a token; the check is defensive. */
+function toShopContext(session: { shop: string; accessToken?: string }): ShopContext {
+  if (!session.accessToken) {
+    throw new Error("No access token on the current session — try reinstalling the app.");
+  }
+  return { shop: session.shop, accessToken: session.accessToken };
+}
 
 interface SyncResult {
   rows: MarginRow[];
@@ -62,8 +71,9 @@ export const action = async ({
 
   try {
     if (intent === "sync") {
-      const { rows, summary } = await runDiagnostic();
-      setCachedDiagnostic(session.shop, { rows, summary });
+      const shopContext = toShopContext(session);
+      const { rows, summary } = await runDiagnostic(shopContext);
+      await setCachedDiagnostic(session.shop, { rows, summary });
       return { rows, summary } satisfies SyncResult;
     }
 
@@ -73,9 +83,9 @@ export const action = async ({
       // catalog) or paying for a second Shopify fetch. Falls back to a
       // fresh runDiagnostic() if nothing's cached yet (e.g. server
       // restarted since the last sync).
-      const cached = getCachedDiagnostic(session.shop);
-      const { rows, summary } = cached ?? (await runDiagnostic());
-      if (!cached) setCachedDiagnostic(session.shop, { rows, summary });
+      const cached = await getCachedDiagnostic(session.shop);
+      const { rows, summary } = cached ?? (await runDiagnostic(toShopContext(session)));
+      if (!cached) await setCachedDiagnostic(session.shop, { rows, summary });
 
       await writeDiagnostic(rows, summary);
       return {
@@ -90,7 +100,7 @@ export const action = async ({
 
     if (intent === "apply") {
       const entries = JSON.parse(String(formData.get("entries"))) as FixEntry[];
-      const result = await applyChanges(entries);
+      const result = await applyChanges(toShopContext(session), entries);
       return { result } satisfies ApplyResult;
     }
 

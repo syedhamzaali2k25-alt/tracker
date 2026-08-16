@@ -1,5 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import type { ShopContext } from "../shopify/client.js";
+import { getDevShopContext } from "../shopify/devShopContext.js";
 import { applyCostUpdates, applyPriceUpdates } from "../shopify/mutations.js";
 import { changedEntries, readFixEntries, type FixEntry } from "../sheets/fixSheet.js";
 import { saveBackup, type BackupEntry } from "./backup.js";
@@ -20,6 +22,7 @@ export interface ApplyChangesResult {
  * nothing to do.
  */
 export async function applyChanges(
+  shopContext: ShopContext,
   confirmedEntries: FixEntry[],
   onProgress?: (message: string) => void,
 ): Promise<ApplyChangesResult> {
@@ -50,11 +53,11 @@ export async function applyChanges(
 
   if (priceUpdates.length > 0) {
     report(`Updating ${priceUpdates.length} price(s)...`);
-    await applyPriceUpdates(priceUpdates);
+    await applyPriceUpdates(shopContext, priceUpdates);
   }
   if (costUpdates.length > 0) {
     report(`Updating ${costUpdates.length} cost(s)...`);
-    await applyCostUpdates(costUpdates);
+    await applyCostUpdates(shopContext, costUpdates);
   }
 
   report("Done.");
@@ -71,6 +74,7 @@ async function confirmInCli(prompt: string): Promise<boolean> {
 
 async function main() {
   const report = (message: string) => console.log(message);
+  const shopContext = getDevShopContext();
 
   const entries = await readFixEntries();
   const changed = changedEntries(entries);
@@ -88,7 +92,7 @@ async function main() {
     return;
   }
 
-  await applyChanges(changed, report);
+  await applyChanges(shopContext, changed, report);
   report("Done. Run `npm run undo` if you need to restore the previous prices/costs.");
 }
 
