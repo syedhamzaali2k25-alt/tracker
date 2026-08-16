@@ -1,12 +1,22 @@
+import { useEffect, useRef } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
 import { useFetcher } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { runDiagnostic } from "~lib/pipeline/runDiagnostic.js";
+import {
+  buildPreviewFromSheet,
+  type ChangePreview,
+} from "~lib/pipeline/previewChanges.js";
+import { applyChanges, type ApplyChangesResult } from "~lib/pipeline/applyChanges.js";
+import { writeDiagnostic } from "~lib/sheets/diagnosticSheet.js";
+import type { FixEntry } from "~lib/sheets/fixSheet.js";
+import { config } from "~lib/config.js";
 import type { DiagnosticSummary, MarginRow } from "~lib/types.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -14,25 +24,72 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return null;
 };
 
-interface DiagnosticActionData {
+interface SyncResult {
   rows: MarginRow[];
   summary: DiagnosticSummary;
 }
 
-interface DiagnosticActionError {
+interface CreateSheetResult {
+  sheetUrl: string;
+}
+
+interface PreviewResult {
+  preview: ChangePreview;
+}
+
+interface ApplyResult {
+  result: ApplyChangesResult;
+}
+
+interface ActionError {
   error: string;
 }
 
-export const action = async ({ request }: ActionFunctionArgs) => {
+type ActionResponse =
+  | SyncResult
+  | CreateSheetResult
+  | PreviewResult
+  | ApplyResult
+  | ActionError;
+
+export const action = async ({
+  request,
+}: ActionFunctionArgs): Promise<ActionResponse> => {
   await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent"));
 
   try {
-    const { rows, summary } = await runDiagnostic();
-    return { rows, summary } satisfies DiagnosticActionData;
+    if (intent === "sync") {
+      const { rows, summary } = await runDiagnostic();
+      return { rows, summary } satisfies SyncResult;
+    }
+
+    if (intent === "createSheet") {
+      const rows = JSON.parse(String(formData.get("rows"))) as MarginRow[];
+      const summary = JSON.parse(String(formData.get("summary"))) as DiagnosticSummary;
+      await writeDiagnostic(rows, summary);
+      return {
+        sheetUrl: `https://docs.google.com/spreadsheets/d/${config.google.sheetId}/edit`,
+      } satisfies CreateSheetResult;
+    }
+
+    if (intent === "preview") {
+      const preview = await buildPreviewFromSheet();
+      return { preview } satisfies PreviewResult;
+    }
+
+    if (intent === "apply") {
+      const entries = JSON.parse(String(formData.get("entries"))) as FixEntry[];
+      const result = await applyChanges(entries);
+      return { result } satisfies ApplyResult;
+    }
+
+    throw new Error(`Unknown intent: ${intent}`);
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : String(error),
-    } satisfies DiagnosticActionError;
+    } satisfies ActionError;
   }
 };
 
@@ -49,18 +106,104 @@ function pluralize(count: number, noun: string): string {
 }
 
 export default function Dashboard() {
-  const fetcher = useFetcher<typeof action>();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+  const shopify = useAppBridge();
+  const modalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
+
+  const syncFetcher = useFetcher<typeof action>();
+  const createSheetFetcher = useFetcher<typeof action>();
+  const previewFetcher = useFetcher<typeof action>();
+  const applyFetcher = useFetcher<typeof action>();
+
+  const isSyncing =
+    ["loading", "submitting"].includes(syncFetcher.state) &&
+    syncFetcher.formMethod === "POST";
+  const isCreatingSheet =
+    ["loading", "submitting"].includes(createSheetFetcher.state) &&
+    createSheetFetcher.formMethod === "POST";
+  const isPreviewLoading =
+    ["loading", "submitting"].includes(previewFetcher.state) &&
+    previewFetcher.formMethod === "POST";
+  const isApplying =
+    ["loading", "submitting"].includes(applyFetcher.state) &&
+    applyFetcher.formMethod === "POST";
 
   const errorMessage =
-    fetcher.data && "error" in fetcher.data ? fetcher.data.error : undefined;
+    syncFetcher.data && "error" in syncFetcher.data ? syncFetcher.data.error : undefined;
   const result =
-    fetcher.data && !("error" in fetcher.data) ? fetcher.data : undefined;
+    syncFetcher.data && "rows" in syncFetcher.data ? syncFetcher.data : undefined;
   const hasSynced = result !== undefined;
 
-  const sync = () => fetcher.submit({}, { method: "POST" });
+  const sheetUrl =
+    createSheetFetcher.data && "sheetUrl" in createSheetFetcher.data
+      ? createSheetFetcher.data.sheetUrl
+      : undefined;
+
+  const previewData =
+    previewFetcher.data && "preview" in previewFetcher.data
+      ? previewFetcher.data.preview
+      : undefined;
+
+  const sync = () => syncFetcher.submit({ intent: "sync" }, { method: "POST" });
+
+  const createSheet = () => {
+    if (!result) return;
+    createSheetFetcher.submit(
+      {
+        intent: "createSheet",
+        rows: JSON.stringify(result.rows),
+        summary: JSON.stringify(result.summary),
+      },
+      { method: "POST" },
+    );
+  };
+
+  const pushChanges = () =>
+    previewFetcher.submit({ intent: "preview" }, { method: "POST" });
+
+  const confirmPush = () => {
+    if (!previewData) return;
+    applyFetcher.submit(
+      { intent: "apply", entries: JSON.stringify(previewData.entries) },
+      { method: "POST" },
+    );
+  };
+
+  // Open the modal only once the preview has actually loaded, and only when
+  // there's something to confirm — never for a zero-change result.
+  useEffect(() => {
+    if (!previewFetcher.data) return;
+
+    if ("error" in previewFetcher.data) {
+      shopify.toast.show(previewFetcher.data.error, { isError: true });
+      return;
+    }
+    if (!("preview" in previewFetcher.data)) return;
+
+    if (previewFetcher.data.preview.count === 0) {
+      shopify.toast.show("No New Price / New Cost values found in the Fix tab.");
+      return;
+    }
+
+    modalRef.current?.showOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewFetcher.data]);
+
+  // Report the apply outcome and close the modal, whether it succeeded or not.
+  useEffect(() => {
+    if (!applyFetcher.data) return;
+
+    modalRef.current?.hideOverlay();
+
+    if ("error" in applyFetcher.data) {
+      shopify.toast.show(applyFetcher.data.error, { isError: true });
+      return;
+    }
+    if (!("result" in applyFetcher.data)) return;
+
+    const { pricesUpdated, costsUpdated } = applyFetcher.data.result;
+    shopify.toast.show(`Updated ${pricesUpdated} price(s) and ${costsUpdated} cost(s) in Shopify.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyFetcher.data]);
 
   const currencyCode = result?.summary.currencyCode ?? "";
   // Below-cost products get their own section (the urgent list) instead of
@@ -78,9 +221,26 @@ export default function Dashboard() {
         slot="primary-action"
         variant="primary"
         onClick={sync}
-        {...(isLoading ? { loading: true } : {})}
+        {...(isSyncing ? { loading: true } : {})}
       >
         Sync from Shopify
+      </s-button>
+
+      {result && (
+        <s-button
+          slot="secondary-actions"
+          onClick={createSheet}
+          {...(isCreatingSheet ? { loading: true } : {})}
+        >
+          Create sheet
+        </s-button>
+      )}
+      <s-button
+        slot="secondary-actions"
+        onClick={pushChanges}
+        {...(isPreviewLoading ? { loading: true } : {})}
+      >
+        Push changes
       </s-button>
 
       {errorMessage && (
@@ -89,7 +249,7 @@ export default function Dashboard() {
         </s-banner>
       )}
 
-      {!hasSynced && !isLoading && !errorMessage && (
+      {!hasSynced && !isSyncing && !errorMessage && (
         <s-section heading="Find out what's costing you money">
           <s-paragraph>
             Sync checks every product&apos;s cost against its price and the
@@ -99,6 +259,18 @@ export default function Dashboard() {
             reads from Shopify; nothing in your store changes.
           </s-paragraph>
         </s-section>
+      )}
+
+      {sheetUrl && (
+        <s-banner tone="success" heading="Sheet created">
+          <s-paragraph>
+            <s-link href={sheetUrl} target="_blank">
+              Open the Google Sheet
+            </s-link>{" "}
+            to review the numbers or type New Price / New Cost values in the
+            Fix tab, then come back and click &quot;Push changes&quot;.
+          </s-paragraph>
+        </s-banner>
       )}
 
       {result && (
@@ -235,6 +407,68 @@ export default function Dashboard() {
           )}
         </>
       )}
+
+      <s-modal ref={modalRef} heading="Confirm changes to Shopify">
+        {previewData && (
+          <s-stack direction="block" gap="base">
+            <s-paragraph>
+              You are about to change{" "}
+              <s-text type="strong">{previewData.count}</s-text> price(s)/cost(s).
+            </s-paragraph>
+            <s-paragraph>
+              Biggest increase: +{previewData.biggestIncreasePct.toFixed(1)}%
+            </s-paragraph>
+            <s-paragraph>
+              Biggest decrease:{" "}
+              {previewData.biggestDecreasePct === 0
+                ? "none"
+                : `${previewData.biggestDecreasePct.toFixed(1)}%`}
+            </s-paragraph>
+            {previewData.belowCostAfterChange.length > 0 && (
+              <s-banner
+                tone="warning"
+                heading={`${previewData.belowCostAfterChange.length} product(s) would end up BELOW their cost`}
+              >
+                <s-unordered-list>
+                  {previewData.belowCostAfterChange.map((entry) => (
+                    <s-list-item key={entry.variantId}>
+                      {entry.productTitle} {entry.variantTitle}
+                    </s-list-item>
+                  ))}
+                </s-unordered-list>
+              </s-banner>
+            )}
+            {previewData.zeroPriceAfterChange.length > 0 && (
+              <s-banner
+                tone="warning"
+                heading={`${previewData.zeroPriceAfterChange.length} product(s) would become 0`}
+              >
+                <s-unordered-list>
+                  {previewData.zeroPriceAfterChange.map((entry) => (
+                    <s-list-item key={entry.variantId}>
+                      {entry.productTitle} {entry.variantTitle}
+                    </s-list-item>
+                  ))}
+                </s-unordered-list>
+              </s-banner>
+            )}
+          </s-stack>
+        )}
+
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          tone="critical"
+          onClick={confirmPush}
+          disabled={!previewData}
+          {...(isApplying ? { loading: true } : {})}
+        >
+          Push {previewData?.count ?? 0} change(s) to Shopify
+        </s-button>
+        <s-button slot="secondary-actions" onClick={() => modalRef.current?.hideOverlay()}>
+          Cancel
+        </s-button>
+      </s-modal>
     </s-page>
   );
 }
