@@ -36,26 +36,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-const FLAG_TONE: Record<MarginRow["flag"], "critical" | "warning" | "neutral" | "success"> = {
-  "below-cost": "critical",
-  "low-margin": "warning",
-  "no-cost": "neutral",
-  ok: "success",
-};
-
-const FLAG_LABEL: Record<MarginRow["flag"], string> = {
-  "below-cost": "Below cost",
-  "low-margin": "Low margin",
-  "no-cost": "No cost data",
-  ok: "OK",
-};
-
 function formatMoney(amount: number, currencyCode: string): string {
   return currencyCode ? `${currencyCode} ${amount.toFixed(2)}` : amount.toFixed(2);
 }
 
 function formatPercent(value: number | null): string {
   return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+}
+
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 export default function Dashboard() {
@@ -73,12 +63,20 @@ export default function Dashboard() {
   const sync = () => fetcher.submit({}, { method: "POST" });
 
   const currencyCode = result?.summary.currencyCode ?? "";
-  const worstRows = result ? result.rows.slice(0, 20) : [];
+  // Below-cost products get their own section (the urgent list) instead of
+  // being mixed in with everything else and told apart only by a badge.
+  const belowCostRows = result
+    ? result.rows.filter((row) => row.flag === "below-cost")
+    : [];
+  const lowMarginRows = result
+    ? result.rows.filter((row) => row.flag === "low-margin").slice(0, 20)
+    : [];
 
   return (
     <s-page heading="Margin Tracker">
       <s-button
         slot="primary-action"
+        variant="primary"
         onClick={sync}
         {...(isLoading ? { loading: true } : {})}
       >
@@ -92,94 +90,149 @@ export default function Dashboard() {
       )}
 
       {!hasSynced && !isLoading && !errorMessage && (
-        <s-section heading="No data yet">
+        <s-section heading="Find out what's costing you money">
           <s-paragraph>
-            Click &quot;Sync from Shopify&quot; to pull your products, their
-            costs, and the last 30 days of sales, and see which products are
-            selling at a thin or negative margin.
+            Sync checks every product&apos;s cost against its price and the
+            last 30 days of sales, then tells you exactly how much money
+            you&apos;re losing on anything selling below cost — plus which
+            products are priced too thin to be worth selling. This only
+            reads from Shopify; nothing in your store changes.
           </s-paragraph>
         </s-section>
       )}
 
       {result && (
         <>
-          {result.summary.belowCostCount > 0 && (
+          {result.summary.belowCostCount > 0 ? (
             <s-banner
               tone="critical"
-              heading={`${result.summary.belowCostCount} product(s) are selling BELOW COST`}
+              heading={`You're losing ${formatMoney(
+                result.summary.belowCostLoss,
+                currencyCode,
+              )} in the last 30 days on ${pluralize(
+                result.summary.belowCostCount,
+                "product",
+              )}`}
             >
               <s-paragraph>
-                You lost {formatMoney(result.summary.belowCostLoss, currencyCode)}{" "}
-                in the last 30 days on these products.
+                Fixing their prices would recover this every 30 days. The
+                products are listed below.
+              </s-paragraph>
+            </s-banner>
+          ) : (
+            <s-banner tone="success" heading="Nothing is selling below cost">
+              <s-paragraph>
+                Every product with a recorded cost currently covers it.
               </s-paragraph>
             </s-banner>
           )}
 
-          <s-section heading="Summary">
-            <s-stack direction="inline" gap="large">
-              <s-box padding="base" borderWidth="base" borderRadius="base">
-                <s-stack direction="block" gap="small">
-                  <s-text tone="critical">Below cost</s-text>
-                  <s-heading>{result.summary.belowCostCount}</s-heading>
-                  <s-text color="subdued">
-                    {formatMoney(result.summary.belowCostLoss, currencyCode)} lost
-                    (30d)
-                  </s-text>
-                </s-stack>
-              </s-box>
-              <s-box padding="base" borderWidth="base" borderRadius="base">
-                <s-stack direction="block" gap="small">
-                  <s-text tone="warning">Below margin threshold</s-text>
-                  <s-heading>{result.summary.lowMarginCount}</s-heading>
-                </s-stack>
-              </s-box>
-              <s-box padding="base" borderWidth="base" borderRadius="base">
-                <s-stack direction="block" gap="small">
-                  <s-text color="subdued">No cost recorded</s-text>
-                  <s-heading>{result.summary.noCostCount}</s-heading>
-                </s-stack>
-              </s-box>
-            </s-stack>
-          </s-section>
+          {result.summary.noCostCount > 0 && (
+            <s-section heading="Most of your catalog can't be checked yet">
+              <s-stack direction="block" gap="small">
+                <s-paragraph>
+                  <s-text tone="warning">
+                    {pluralize(result.summary.noCostCount, "product")}
+                  </s-text>{" "}
+                  have no cost recorded in Shopify, so margin can&apos;t be
+                  calculated for them at all — this is the single most
+                  useful thing you can fix before your next sync.
+                </s-paragraph>
+                <s-paragraph>
+                  In Shopify admin, open each product and add a{" "}
+                  <s-text type="strong">Cost per item</s-text> value under
+                  Pricing, then sync again.
+                </s-paragraph>
+              </s-stack>
+            </s-section>
+          )}
 
-          <s-section heading={`Worst ${worstRows.length} margins`}>
-            <s-table>
-              <s-table-header-row>
-                <s-table-header>Product</s-table-header>
-                <s-table-header>Variant</s-table-header>
-                <s-table-header>SKU</s-table-header>
-                <s-table-header format="currency">Cost</s-table-header>
-                <s-table-header format="currency">Price</s-table-header>
-                <s-table-header format="numeric">Margin %</s-table-header>
-                <s-table-header format="numeric">Sold (30d)</s-table-header>
-                <s-table-header>Flag</s-table-header>
-              </s-table-header-row>
-              <s-table-body>
-                {worstRows.map((row) => (
-                  <s-table-row key={row.variantId}>
-                    <s-table-cell>{row.productTitle}</s-table-cell>
-                    <s-table-cell>{row.variantTitle}</s-table-cell>
-                    <s-table-cell>{row.sku}</s-table-cell>
-                    <s-table-cell>
-                      {row.cost === null
-                        ? "—"
-                        : formatMoney(row.cost, row.currencyCode || currencyCode)}
-                    </s-table-cell>
-                    <s-table-cell>
-                      {formatMoney(row.price, row.currencyCode || currencyCode)}
-                    </s-table-cell>
-                    <s-table-cell>{formatPercent(row.marginPct)}</s-table-cell>
-                    <s-table-cell>{row.unitsSold30d}</s-table-cell>
-                    <s-table-cell>
-                      <s-badge tone={FLAG_TONE[row.flag]}>
-                        {FLAG_LABEL[row.flag]}
-                      </s-badge>
-                    </s-table-cell>
-                  </s-table-row>
-                ))}
-              </s-table-body>
-            </s-table>
-          </s-section>
+          {belowCostRows.length > 0 && (
+            <s-section heading={`Selling below cost (${belowCostRows.length})`}>
+              <s-table>
+                <s-table-header-row>
+                  <s-table-header listSlot="primary">Product</s-table-header>
+                  <s-table-header listSlot="secondary">Variant</s-table-header>
+                  <s-table-header>SKU</s-table-header>
+                  <s-table-header format="currency">Cost</s-table-header>
+                  <s-table-header format="currency">Price</s-table-header>
+                  <s-table-header format="numeric">Margin %</s-table-header>
+                  <s-table-header format="numeric">Sold (30d)</s-table-header>
+                  <s-table-header format="currency">
+                    Recovers if fixed (30d)
+                  </s-table-header>
+                </s-table-header-row>
+                <s-table-body>
+                  {belowCostRows.map((row) => (
+                    <s-table-row key={row.variantId}>
+                      <s-table-cell>{row.productTitle}</s-table-cell>
+                      <s-table-cell>{row.variantTitle}</s-table-cell>
+                      <s-table-cell>{row.sku}</s-table-cell>
+                      <s-table-cell>
+                        {row.cost === null
+                          ? "—"
+                          : formatMoney(row.cost, row.currencyCode || currencyCode)}
+                      </s-table-cell>
+                      <s-table-cell>
+                        {formatMoney(row.price, row.currencyCode || currencyCode)}
+                      </s-table-cell>
+                      <s-table-cell>{formatPercent(row.marginPct)}</s-table-cell>
+                      <s-table-cell>{row.unitsSold30d}</s-table-cell>
+                      <s-table-cell>
+                        <s-text tone="critical">
+                          {formatMoney(
+                            Math.abs(row.profit30d!),
+                            row.currencyCode || currencyCode,
+                          )}
+                        </s-text>
+                      </s-table-cell>
+                    </s-table-row>
+                  ))}
+                </s-table-body>
+              </s-table>
+            </s-section>
+          )}
+
+          {lowMarginRows.length > 0 && (
+            <s-section
+              heading={`Other thin-margin products (${lowMarginRows.length})`}
+            >
+              <s-table>
+                <s-table-header-row>
+                  <s-table-header listSlot="primary">Product</s-table-header>
+                  <s-table-header listSlot="secondary">Variant</s-table-header>
+                  <s-table-header>SKU</s-table-header>
+                  <s-table-header format="currency">Cost</s-table-header>
+                  <s-table-header format="currency">Price</s-table-header>
+                  <s-table-header format="numeric">Margin %</s-table-header>
+                  <s-table-header format="numeric">Sold (30d)</s-table-header>
+                  <s-table-header format="currency">Profit (30d)</s-table-header>
+                </s-table-header-row>
+                <s-table-body>
+                  {lowMarginRows.map((row) => (
+                    <s-table-row key={row.variantId}>
+                      <s-table-cell>{row.productTitle}</s-table-cell>
+                      <s-table-cell>{row.variantTitle}</s-table-cell>
+                      <s-table-cell>{row.sku}</s-table-cell>
+                      <s-table-cell>
+                        {row.cost === null
+                          ? "—"
+                          : formatMoney(row.cost, row.currencyCode || currencyCode)}
+                      </s-table-cell>
+                      <s-table-cell>
+                        {formatMoney(row.price, row.currencyCode || currencyCode)}
+                      </s-table-cell>
+                      <s-table-cell>{formatPercent(row.marginPct)}</s-table-cell>
+                      <s-table-cell>{row.unitsSold30d}</s-table-cell>
+                      <s-table-cell>
+                        {formatMoney(row.profit30d!, row.currencyCode || currencyCode)}
+                      </s-table-cell>
+                    </s-table-row>
+                  ))}
+                </s-table-body>
+              </s-table>
+            </s-section>
+          )}
         </>
       )}
     </s-page>
