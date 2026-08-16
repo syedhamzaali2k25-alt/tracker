@@ -18,6 +18,7 @@ import { writeDiagnostic } from "~lib/sheets/diagnosticSheet.js";
 import type { FixEntry } from "~lib/sheets/fixSheet.js";
 import { config } from "~lib/config.js";
 import type { DiagnosticSummary, MarginRow } from "~lib/types.js";
+import { getCachedDiagnostic, setCachedDiagnostic } from "../diagnostic-cache.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -55,19 +56,27 @@ type ActionResponse =
 export const action = async ({
   request,
 }: ActionFunctionArgs): Promise<ActionResponse> => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = String(formData.get("intent"));
 
   try {
     if (intent === "sync") {
       const { rows, summary } = await runDiagnostic();
+      setCachedDiagnostic(session.shop, { rows, summary });
       return { rows, summary } satisfies SyncResult;
     }
 
     if (intent === "createSheet") {
-      const rows = JSON.parse(String(formData.get("rows"))) as MarginRow[];
-      const summary = JSON.parse(String(formData.get("summary"))) as DiagnosticSummary;
+      // Reuse the last diagnostic for this shop instead of round-tripping
+      // rows/summary through the browser (a multi-megabyte POST on a large
+      // catalog) or paying for a second Shopify fetch. Falls back to a
+      // fresh runDiagnostic() if nothing's cached yet (e.g. server
+      // restarted since the last sync).
+      const cached = getCachedDiagnostic(session.shop);
+      const { rows, summary } = cached ?? (await runDiagnostic());
+      if (!cached) setCachedDiagnostic(session.shop, { rows, summary });
+
       await writeDiagnostic(rows, summary);
       return {
         sheetUrl: `https://docs.google.com/spreadsheets/d/${config.google.sheetId}/edit`,
@@ -145,17 +154,8 @@ export default function Dashboard() {
 
   const sync = () => syncFetcher.submit({ intent: "sync" }, { method: "POST" });
 
-  const createSheet = () => {
-    if (!result) return;
-    createSheetFetcher.submit(
-      {
-        intent: "createSheet",
-        rows: JSON.stringify(result.rows),
-        summary: JSON.stringify(result.summary),
-      },
-      { method: "POST" },
-    );
-  };
+  const createSheet = () =>
+    createSheetFetcher.submit({ intent: "createSheet" }, { method: "POST" });
 
   const pushChanges = () =>
     previewFetcher.submit({ intent: "preview" }, { method: "POST" });
@@ -351,12 +351,16 @@ export default function Dashboard() {
                       <s-table-cell>{formatPercent(row.marginPct)}</s-table-cell>
                       <s-table-cell>{row.unitsSold30d}</s-table-cell>
                       <s-table-cell>
-                        <s-text tone="critical">
-                          {formatMoney(
-                            Math.abs(row.profit30d!),
-                            row.currencyCode || currencyCode,
-                          )}
-                        </s-text>
+                        {row.profit30d === null ? (
+                          "—"
+                        ) : (
+                          <s-text tone="critical">
+                            {formatMoney(
+                              Math.abs(row.profit30d),
+                              row.currencyCode || currencyCode,
+                            )}
+                          </s-text>
+                        )}
                       </s-table-cell>
                     </s-table-row>
                   ))}
@@ -397,7 +401,9 @@ export default function Dashboard() {
                       <s-table-cell>{formatPercent(row.marginPct)}</s-table-cell>
                       <s-table-cell>{row.unitsSold30d}</s-table-cell>
                       <s-table-cell>
-                        {formatMoney(row.profit30d!, row.currencyCode || currencyCode)}
+                        {row.profit30d === null
+                          ? "—"
+                          : formatMoney(row.profit30d, row.currencyCode || currencyCode)}
                       </s-table-cell>
                     </s-table-row>
                   ))}
