@@ -1,11 +1,7 @@
-import readline from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import type { ShopContext } from "../shopify/client.js";
-import { getDevShopContext } from "../shopify/devShopContext.js";
 import { applyCostUpdates, applyPriceUpdates } from "../shopify/mutations.js";
-import { changedEntries, readFixEntries, type FixEntry } from "../sheets/fixSheet.js";
+import type { FixEntry } from "../sheets/fixSheet.js";
 import { saveBackup, type BackupEntry } from "./backup.js";
-import { buildPreview, printPreview } from "./previewChanges.js";
 
 export interface ApplyChangesResult {
   pricesUpdated: number;
@@ -63,42 +59,4 @@ export async function applyChanges(
   report("Done.");
 
   return { pricesUpdated: priceUpdates.length, costsUpdated: costUpdates.length, backupId };
-}
-
-async function confirmInCli(prompt: string): Promise<boolean> {
-  const rl = readline.createInterface({ input: stdin, output: stdout });
-  const answer = await rl.question(`${prompt} Type YES to confirm: `);
-  rl.close();
-  return answer.trim() === "YES";
-}
-
-async function main() {
-  const report = (message: string) => console.log(message);
-  const shopContext = getDevShopContext();
-
-  const entries = await readFixEntries();
-  const changed = changedEntries(entries);
-
-  if (changed.length === 0) {
-    report("No New Price / New Cost values found in the Fix tab — nothing to apply.");
-    return;
-  }
-
-  printPreview(buildPreview(changed));
-
-  const proceed = await confirmInCli("\nApply these changes to your live Shopify store?");
-  if (!proceed) {
-    report("Cancelled. Nothing was changed.");
-    return;
-  }
-
-  await applyChanges(shopContext, changed, report);
-  report("Done. Run `npm run undo` if you need to restore the previous prices/costs.");
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
 }

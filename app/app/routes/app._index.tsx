@@ -72,6 +72,7 @@ export const action = async ({
   try {
     if (intent === "sync") {
       const shopContext = toShopContext(session);
+      console.log(`[action] intent=sync session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
       const { rows, summary } = await runDiagnostic(shopContext);
       await setCachedDiagnostic(session.shop, { rows, summary });
       return { rows, summary } satisfies SyncResult;
@@ -83,8 +84,10 @@ export const action = async ({
       // catalog) or paying for a second Shopify fetch. Falls back to a
       // fresh runDiagnostic() if nothing's cached yet (e.g. server
       // restarted since the last sync).
+      const shopContext = toShopContext(session);
+      console.log(`[action] intent=createSheet session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
       const cached = await getCachedDiagnostic(session.shop);
-      const { rows, summary } = cached ?? (await runDiagnostic(toShopContext(session)));
+      const { rows, summary } = cached ?? (await runDiagnostic(shopContext));
       if (!cached) await setCachedDiagnostic(session.shop, { rows, summary });
 
       await writeDiagnostic(rows, summary);
@@ -99,8 +102,10 @@ export const action = async ({
     }
 
     if (intent === "apply") {
+      const shopContext = toShopContext(session);
+      console.log(`[action] intent=apply session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
       const entries = JSON.parse(String(formData.get("entries"))) as FixEntry[];
-      const result = await applyChanges(toShopContext(session), entries);
+      const result = await applyChanges(shopContext, entries);
       return { result } satisfies ApplyResult;
     }
 

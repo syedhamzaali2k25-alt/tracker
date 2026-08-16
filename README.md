@@ -79,11 +79,11 @@ src/
     diagnosticSheet.ts         Diagnostic + Fix tab layout and writing
     fixSheet.ts                 reads merchant-entered New Price/New Cost
   pipeline/
-    runDiagnostic.ts            `npm run diagnostic`
-    previewChanges.ts            `npm run preview`
-    applyChanges.ts               `npm run apply`
-    undo.ts                        `npm run undo`
+    runDiagnostic.ts, previewChanges.ts, applyChanges.ts, undo.ts
+                                    exported functions, reused by the app
     backup.ts, devShopContext.ts   shared helpers
+    cli/                           `npm run diagnostic/preview/apply/undo`
+                                    entry points (see below)
 ```
 
 Every Shopify-facing function (`fetchAllVariants`, `applyPriceUpdates`, etc.)
@@ -91,6 +91,17 @@ takes a `ShopContext { shop, accessToken }` as an explicit parameter — there's
 no global "the current shop." The CLI builds one from
 `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` (`devShopContext.ts`); the app in
 `app/` builds one from the authenticated OAuth session for each request.
+
+The four `npm run diagnostic/preview/apply/undo` entry points live in
+`pipeline/cli/`, separate from the functions they call, rather than each
+pipeline file running itself when invoked directly (`if (import.meta.url ===
+file://process.argv[1])`). That guard broke once the app started importing
+these same pipeline files: bundling them all into one SSR server file made
+the guard match the *bundle's* path, so every CLI script's `main()` —
+including the one that writes prices to Shopify — ran automatically on every
+server boot, using whatever `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` happened to
+be set. Keeping the CLI entry points in files the app never imports makes
+that impossible by construction, not just by careful coding.
 
 ## Not built yet
 

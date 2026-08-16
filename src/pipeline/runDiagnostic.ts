@@ -1,9 +1,7 @@
 import { config } from "../config.js";
 import { calculateMarginRows, summarize } from "../margin/calculate.js";
 import type { ShopContext } from "../shopify/client.js";
-import { getDevShopContext } from "../shopify/devShopContext.js";
 import { fetchAllVariants, fetchUnitsSoldByVariant } from "../shopify/queries.js";
-import { writeDiagnostic } from "../sheets/diagnosticSheet.js";
 import type { DiagnosticSummary, MarginRow } from "../types.js";
 
 export interface DiagnosticResult {
@@ -40,24 +38,4 @@ export async function runDiagnostic(
   report(`${summary.noCostCount} products have no cost recorded.`);
 
   return { rows, summary };
-}
-
-async function main() {
-  const report = (message: string) => console.log(message);
-  const shopContext = getDevShopContext();
-  const { rows, summary } = await runDiagnostic(shopContext, report);
-
-  report("Writing to Google Sheet...");
-  const { preservedCount } = await writeDiagnostic(rows, summary);
-  if (preservedCount > 0) {
-    report(`Preserved ${preservedCount} pending edits from the Fix tab.`);
-  }
-  report("Done. Diagnostic and Fix tabs updated.");
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
 }

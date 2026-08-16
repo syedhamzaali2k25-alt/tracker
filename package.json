@@ -5,10 +5,10 @@
   "description": "Margin diagnostic and price/cost sync between Shopify and Google Sheets.",
   "type": "module",
   "scripts": {
-    "diagnostic": "tsx src/pipeline/runDiagnostic.ts",
-    "preview": "tsx src/pipeline/previewChanges.ts",
-    "apply": "tsx src/pipeline/applyChanges.ts",
-    "undo": "tsx src/pipeline/undo.ts",
+    "diagnostic": "tsx src/pipeline/cli/diagnostic.ts",
+    "preview": "tsx src/pipeline/cli/preview.ts",
+    "apply": "tsx src/pipeline/cli/apply.ts",
+    "undo": "tsx src/pipeline/cli/undo.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/margin/calculate.test.ts src/pipeline/previewChanges.test.ts src/sheets/diagnosticSheet.test.ts src/pipeline/backup.test.ts src/shopify/mutations.test.ts src/sheets/fixSheet.test.ts src/shopify/client.test.ts"
   },

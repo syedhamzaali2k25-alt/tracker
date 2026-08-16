@@ -75,15 +75,3 @@ export async function buildPreviewFromSheet(
   const changed = changedEntries(entries);
   return buildPreview(changed);
 }
-
-async function main() {
-  const preview = await buildPreviewFromSheet((message) => console.log(message));
-  printPreview(preview);
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
-}
