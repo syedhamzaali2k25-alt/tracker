@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
@@ -114,9 +114,20 @@ function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+const PUSH_MODAL_ID = "push-changes-modal";
+
 export default function Dashboard() {
   const shopify = useAppBridge();
-  const modalRef = useRef<HTMLElementTagNameMap["s-modal"] | null>(null);
+  // Tracks which preview object confirmPush already submitted, so a second
+  // click can't resubmit it. Not synced from the fetcher via an effect —
+  // React's rules-of-hooks lint (correctly) flags setState-in-effect as a
+  // cascading-render risk. Instead this is set once, in the click handler,
+  // and activePreview below is a plain derived comparison: a fresh "Push
+  // changes" click produces a new preview object, which naturally differs
+  // from submittedPreview and re-activates without any reset needed.
+  const [submittedPreview, setSubmittedPreview] = useState<ChangePreview | null>(
+    null,
+  );
 
   const syncFetcher = useFetcher<typeof action>();
   const createSheetFetcher = useFetcher<typeof action>();
@@ -151,6 +162,8 @@ export default function Dashboard() {
     previewFetcher.data && "preview" in previewFetcher.data
       ? previewFetcher.data.preview
       : undefined;
+  const activePreview =
+    previewData && previewData !== submittedPreview ? previewData : undefined;
 
   const sync = () => syncFetcher.submit({ intent: "sync" }, { method: "POST" });
 
@@ -161,11 +174,15 @@ export default function Dashboard() {
     previewFetcher.submit({ intent: "preview" }, { method: "POST" });
 
   const confirmPush = () => {
-    if (!previewData) return;
+    if (!activePreview) return;
     applyFetcher.submit(
-      { intent: "apply", entries: JSON.stringify(previewData.entries) },
+      { intent: "apply", entries: JSON.stringify(activePreview.entries) },
       { method: "POST" },
     );
+    // Marking this preview as submitted clears activePreview on the very
+    // next render — a rapid second click can't reuse it while the first
+    // apply is still in flight.
+    setSubmittedPreview(activePreview);
   };
 
   // Open the modal only once the preview has actually loaded, and only when
@@ -184,7 +201,7 @@ export default function Dashboard() {
       return;
     }
 
-    modalRef.current?.showOverlay();
+    shopify.modal.show(PUSH_MODAL_ID);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewFetcher.data]);
 
@@ -192,7 +209,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (!applyFetcher.data) return;
 
-    modalRef.current?.hideOverlay();
+    shopify.modal.hide(PUSH_MODAL_ID);
 
     if ("error" in applyFetcher.data) {
       shopify.toast.show(applyFetcher.data.error, { isError: true });
@@ -414,29 +431,29 @@ export default function Dashboard() {
         </>
       )}
 
-      <s-modal ref={modalRef} heading="Confirm changes to Shopify">
-        {previewData && (
+      <s-modal id={PUSH_MODAL_ID} heading="Confirm changes to Shopify">
+        {activePreview && (
           <s-stack direction="block" gap="base">
             <s-paragraph>
               You are about to change{" "}
-              <s-text type="strong">{previewData.count}</s-text> price(s)/cost(s).
+              <s-text type="strong">{activePreview.count}</s-text> price(s)/cost(s).
             </s-paragraph>
             <s-paragraph>
-              Biggest increase: +{previewData.biggestIncreasePct.toFixed(1)}%
+              Biggest increase: +{activePreview.biggestIncreasePct.toFixed(1)}%
             </s-paragraph>
             <s-paragraph>
               Biggest decrease:{" "}
-              {previewData.biggestDecreasePct === 0
+              {activePreview.biggestDecreasePct === 0
                 ? "none"
-                : `${previewData.biggestDecreasePct.toFixed(1)}%`}
+                : `${activePreview.biggestDecreasePct.toFixed(1)}%`}
             </s-paragraph>
-            {previewData.belowCostAfterChange.length > 0 && (
+            {activePreview.belowCostAfterChange.length > 0 && (
               <s-banner
                 tone="warning"
-                heading={`${previewData.belowCostAfterChange.length} product(s) would end up BELOW their cost`}
+                heading={`${activePreview.belowCostAfterChange.length} product(s) would end up BELOW their cost`}
               >
                 <s-unordered-list>
-                  {previewData.belowCostAfterChange.map((entry) => (
+                  {activePreview.belowCostAfterChange.map((entry) => (
                     <s-list-item key={entry.variantId}>
                       {entry.productTitle} {entry.variantTitle}
                     </s-list-item>
@@ -444,13 +461,13 @@ export default function Dashboard() {
                 </s-unordered-list>
               </s-banner>
             )}
-            {previewData.zeroPriceAfterChange.length > 0 && (
+            {activePreview.zeroPriceAfterChange.length > 0 && (
               <s-banner
                 tone="warning"
-                heading={`${previewData.zeroPriceAfterChange.length} product(s) would become 0`}
+                heading={`${activePreview.zeroPriceAfterChange.length} product(s) would become 0`}
               >
                 <s-unordered-list>
-                  {previewData.zeroPriceAfterChange.map((entry) => (
+                  {activePreview.zeroPriceAfterChange.map((entry) => (
                     <s-list-item key={entry.variantId}>
                       {entry.productTitle} {entry.variantTitle}
                     </s-list-item>
@@ -466,12 +483,15 @@ export default function Dashboard() {
           variant="primary"
           tone="critical"
           onClick={confirmPush}
-          disabled={!previewData}
+          disabled={!activePreview || isApplying}
           {...(isApplying ? { loading: true } : {})}
         >
-          Push {previewData?.count ?? 0} change(s) to Shopify
+          Push {activePreview?.count ?? 0} change(s) to Shopify
         </s-button>
-        <s-button slot="secondary-actions" onClick={() => modalRef.current?.hideOverlay()}>
+        <s-button
+          slot="secondary-actions"
+          onClick={() => shopify.modal.hide(PUSH_MODAL_ID)}
+        >
           Cancel
         </s-button>
       </s-modal>
