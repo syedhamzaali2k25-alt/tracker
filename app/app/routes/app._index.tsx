@@ -4,7 +4,7 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher } from "react-router";
+import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
@@ -14,17 +14,26 @@ import {
   type ChangePreview,
 } from "~lib/pipeline/previewChanges.js";
 import { applyChanges, type ApplyChangesResult } from "~lib/pipeline/applyChanges.js";
+import { createSpreadsheet, type GoogleContext } from "~lib/sheets/client.js";
 import { writeDiagnostic } from "~lib/sheets/diagnosticSheet.js";
 import type { FixEntry } from "~lib/sheets/fixSheet.js";
-import { config } from "~lib/config.js";
 import type { ShopContext } from "~lib/shopify/client.js";
 import type { DiagnosticSummary, MarginRow } from "~lib/types.js";
 import { getCachedDiagnostic, setCachedDiagnostic } from "../diagnostic-cache.server";
+import {
+  getGoogleConnectUrl,
+  googleAuthClientFromRefreshToken,
+  isGoogleReauthError,
+} from "../google-auth.server";
+import {
+  getGoogleConnection,
+  invalidateGoogleConnection,
+  saveSpreadsheetId,
+} from "../google-account.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-  return null;
-};
+function spreadsheetUrlFor(spreadsheetId: string): string {
+  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+}
 
 /** authenticate.admin() always returns an active session with a token; the check is defensive. */
 function toShopContext(session: { shop: string; accessToken?: string }): ShopContext {
@@ -33,6 +42,21 @@ function toShopContext(session: { shop: string; accessToken?: string }): ShopCon
   }
   return { shop: session.shop, accessToken: session.accessToken };
 }
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const url = new URL(request.url);
+
+  const connection = await getGoogleConnection(session.shop);
+
+  return {
+    googleConnected: connection !== null,
+    spreadsheetUrl: connection?.spreadsheetId ? spreadsheetUrlFor(connection.spreadsheetId) : null,
+    connectUrl: getGoogleConnectUrl(session.shop),
+    googleJustConnected: url.searchParams.get("googleConnected") === "1",
+    googleError: url.searchParams.get("googleError"),
+  };
+};
 
 interface SyncResult {
   rows: MarginRow[];
@@ -51,6 +75,14 @@ interface ApplyResult {
   result: ApplyChangesResult;
 }
 
+interface NeedsGoogleConnect {
+  needsGoogleConnect: true;
+}
+
+interface NeedsGoogleReconnect {
+  needsGoogleReconnect: true;
+}
+
 interface ActionError {
   error: string;
 }
@@ -60,7 +92,57 @@ type ActionResponse =
   | CreateSheetResult
   | PreviewResult
   | ApplyResult
+  | NeedsGoogleConnect
+  | NeedsGoogleReconnect
   | ActionError;
+
+/**
+ * Builds a GoogleContext for this shop, creating the spreadsheet in the
+ * merchant's own Drive the first time (never asking for a sheet ID). Returns
+ * null if Google isn't connected yet — the caller should respond with
+ * needsGoogleConnect rather than attempting the Sheets call.
+ */
+async function googleContextForShop(shop: string): Promise<GoogleContext | null> {
+  const connection = await getGoogleConnection(shop);
+  if (!connection) return null;
+
+  const auth = googleAuthClientFromRefreshToken(connection.refreshToken);
+  let spreadsheetId = connection.spreadsheetId;
+  if (!spreadsheetId) {
+    spreadsheetId = await createSpreadsheet(auth, `Margin Tracker — ${shop}`);
+    await saveSpreadsheetId(shop, spreadsheetId);
+  }
+
+  return { auth, spreadsheetId };
+}
+
+/**
+ * Same as googleContextForShop, but for reading rather than writing: never
+ * creates a spreadsheet, since a brand new one has no Fix tab to read from
+ * (only "Create sheet" — via googleContextForShop above — creates one).
+ * Returns a needsGoogleConnect/ActionError response to send straight back
+ * to the client on anything short of an existing, connected sheet.
+ */
+async function requireExistingGoogleContext(
+  shop: string,
+): Promise<{ ok: true; ctx: GoogleContext } | { ok: false; response: NeedsGoogleConnect | ActionError }> {
+  const connection = await getGoogleConnection(shop);
+  if (!connection) {
+    return { ok: false, response: { needsGoogleConnect: true } };
+  }
+  if (!connection.spreadsheetId) {
+    return {
+      ok: false,
+      response: {
+        error:
+          'No sheet yet — click "Create sheet" first, add New Price / New Cost values in the ' +
+          "Fix tab, then push changes.",
+      },
+    };
+  }
+  const auth = googleAuthClientFromRefreshToken(connection.refreshToken);
+  return { ok: true, ctx: { auth, spreadsheetId: connection.spreadsheetId } };
+}
 
 export const action = async ({
   request,
@@ -79,26 +161,48 @@ export const action = async ({
     }
 
     if (intent === "createSheet") {
-      // Reuse the last diagnostic for this shop instead of round-tripping
-      // rows/summary through the browser (a multi-megabyte POST on a large
-      // catalog) or paying for a second Shopify fetch. Falls back to a
-      // fresh runDiagnostic() if nothing's cached yet (e.g. server
-      // restarted since the last sync).
       const shopContext = toShopContext(session);
       console.log(`[action] intent=createSheet session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
-      const cached = await getCachedDiagnostic(session.shop);
-      const { rows, summary } = cached ?? (await runDiagnostic(shopContext));
-      if (!cached) await setCachedDiagnostic(session.shop, { rows, summary });
 
-      await writeDiagnostic(rows, summary);
-      return {
-        sheetUrl: `https://docs.google.com/spreadsheets/d/${config.google.sheetId}/edit`,
-      } satisfies CreateSheetResult;
+      try {
+        const googleContext = await googleContextForShop(session.shop);
+        if (!googleContext) {
+          return { needsGoogleConnect: true } satisfies NeedsGoogleConnect;
+        }
+
+        // Reuse the last diagnostic for this shop instead of round-tripping
+        // rows/summary through the browser (a multi-megabyte POST on a large
+        // catalog) or paying for a second Shopify fetch. Falls back to a
+        // fresh runDiagnostic() if nothing's cached yet (e.g. server
+        // restarted since the last sync).
+        const cached = await getCachedDiagnostic(session.shop);
+        const { rows, summary } = cached ?? (await runDiagnostic(shopContext));
+        if (!cached) await setCachedDiagnostic(session.shop, { rows, summary });
+
+        await writeDiagnostic(googleContext, rows, summary);
+        return { sheetUrl: spreadsheetUrlFor(googleContext.spreadsheetId) } satisfies CreateSheetResult;
+      } catch (error) {
+        if (isGoogleReauthError(error)) {
+          await invalidateGoogleConnection(session.shop);
+          return { needsGoogleReconnect: true } satisfies NeedsGoogleReconnect;
+        }
+        throw error;
+      }
     }
 
     if (intent === "preview") {
-      const preview = await buildPreviewFromSheet();
-      return { preview } satisfies PreviewResult;
+      try {
+        const googleContext = await requireExistingGoogleContext(session.shop);
+        if (!googleContext.ok) return googleContext.response;
+        const preview = await buildPreviewFromSheet(googleContext.ctx);
+        return { preview } satisfies PreviewResult;
+      } catch (error) {
+        if (isGoogleReauthError(error)) {
+          await invalidateGoogleConnection(session.shop);
+          return { needsGoogleReconnect: true } satisfies NeedsGoogleReconnect;
+        }
+        throw error;
+      }
     }
 
     if (intent === "apply") {
@@ -133,6 +237,8 @@ const PUSH_MODAL_ID = "push-changes-modal";
 
 export default function Dashboard() {
   const shopify = useAppBridge();
+  const loaderData = useLoaderData<typeof loader>();
+
   // Tracks which preview object confirmPush already submitted, so a second
   // click can't resubmit it. Not synced from the fetcher via an effect —
   // React's rules-of-hooks lint (correctly) flags setState-in-effect as a
@@ -161,6 +267,16 @@ export default function Dashboard() {
   const isApplying =
     ["loading", "submitting"].includes(applyFetcher.state) &&
     applyFetcher.formMethod === "POST";
+
+  // Derived from the loader plus whichever fetcher most recently reported an
+  // invalid_grant, rather than synced into state via an effect — the same
+  // "derive, don't sync" approach as activePreview below. A fresh
+  // createSheet/preview success naturally clears this since that fetcher's
+  // data no longer has needsGoogleReconnect on it.
+  const googleReconnectNeeded =
+    (createSheetFetcher.data && "needsGoogleReconnect" in createSheetFetcher.data) ||
+    (previewFetcher.data && "needsGoogleReconnect" in previewFetcher.data);
+  const googleConnected = loaderData.googleConnected && !googleReconnectNeeded;
 
   const errorMessage =
     syncFetcher.data && "error" in syncFetcher.data ? syncFetcher.data.error : undefined;
@@ -200,11 +316,28 @@ export default function Dashboard() {
     setSubmittedPreview(activePreview);
   };
 
+  // Toast once for whatever the Google OAuth redirect landed us here with.
+  useEffect(() => {
+    if (loaderData.googleJustConnected) {
+      shopify.toast.show("Google connected.");
+    } else if (loaderData.googleError) {
+      shopify.toast.show(
+        "Couldn't connect Google — please try again.",
+        { isError: true },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Open the modal only once the preview has actually loaded, and only when
   // there's something to confirm — never for a zero-change result.
   useEffect(() => {
     if (!previewFetcher.data) return;
 
+    if ("needsGoogleConnect" in previewFetcher.data || "needsGoogleReconnect" in previewFetcher.data) {
+      shopify.toast.show("Connect Google to read the Fix tab.", { isError: true });
+      return;
+    }
     if ("error" in previewFetcher.data) {
       shopify.toast.show(previewFetcher.data.error, { isError: true });
       return;
@@ -219,6 +352,26 @@ export default function Dashboard() {
     shopify.modal.show(PUSH_MODAL_ID);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewFetcher.data]);
+
+  // Report the createSheet outcome, including the Google-connection cases.
+  useEffect(() => {
+    if (!createSheetFetcher.data) return;
+
+    if ("needsGoogleConnect" in createSheetFetcher.data) {
+      shopify.toast.show("Connect Google first to create a sheet.", { isError: true });
+      return;
+    }
+    if ("needsGoogleReconnect" in createSheetFetcher.data) {
+      shopify.toast.show("Your Google connection expired — reconnect to continue.", {
+        isError: true,
+      });
+      return;
+    }
+    if ("error" in createSheetFetcher.data) {
+      shopify.toast.show(createSheetFetcher.data.error, { isError: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createSheetFetcher.data]);
 
   // Report the apply outcome and close the modal, whether it succeeded or not.
   useEffect(() => {
@@ -247,6 +400,9 @@ export default function Dashboard() {
     ? result.rows.filter((row) => row.flag === "low-margin").slice(0, 20)
     : [];
 
+  const sheetActionsUnlocked = googleConnected;
+  const persistedSheetUrl = sheetUrl ?? loaderData.spreadsheetUrl ?? undefined;
+
   return (
     <s-page heading="Margin Tracker">
       <s-button
@@ -258,7 +414,7 @@ export default function Dashboard() {
         Sync from Shopify
       </s-button>
 
-      {result && (
+      {result && sheetActionsUnlocked && (
         <s-button
           slot="secondary-actions"
           onClick={createSheet}
@@ -267,13 +423,29 @@ export default function Dashboard() {
           Create sheet
         </s-button>
       )}
-      <s-button
-        slot="secondary-actions"
-        onClick={pushChanges}
-        {...(isPreviewLoading ? { loading: true } : {})}
-      >
-        Push changes
-      </s-button>
+      {sheetActionsUnlocked && (
+        <s-button
+          slot="secondary-actions"
+          onClick={pushChanges}
+          {...(isPreviewLoading ? { loading: true } : {})}
+        >
+          Push changes
+        </s-button>
+      )}
+
+      {!googleConnected && (
+        <s-banner heading="Connect Google to create a sheet and push fixes">
+          <s-paragraph>
+            Margin Tracker writes its diagnostic into a spreadsheet it creates
+            in your own Google Drive, and reads back any New Price / New Cost
+            values you type into it. Connect your Google account to turn that
+            on — sync from Shopify still works without it.
+          </s-paragraph>
+          <s-link href={loaderData.connectUrl} target="_top">
+            Connect Google
+          </s-link>
+        </s-banner>
+      )}
 
       {errorMessage && (
         <s-banner tone="critical" heading="Sync failed">
@@ -293,10 +465,10 @@ export default function Dashboard() {
         </s-section>
       )}
 
-      {sheetUrl && (
-        <s-banner tone="success" heading="Sheet created">
+      {persistedSheetUrl && (
+        <s-banner tone="success" heading="Sheet ready">
           <s-paragraph>
-            <s-link href={sheetUrl} target="_blank">
+            <s-link href={persistedSheetUrl} target="_blank">
               Open the Google Sheet
             </s-link>{" "}
             to review the numbers or type New Price / New Cost values in the

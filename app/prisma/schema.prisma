@@ -43,3 +43,16 @@ model DiagnosticCache {
   data      String
   updatedAt DateTime @updatedAt
 }
+
+// Per-shop Google connection: an encrypted OAuth refresh token (per-merchant
+// consent, replacing the old single shared service account) plus the ID of
+// the spreadsheet the app created in that merchant's own Drive the first
+// time they created a sheet. refreshToken is nullable so a revoked/expired
+// grant can be cleared without losing the spreadsheetId link — reconnecting
+// resumes writing to the same sheet instead of creating a new one.
+model GoogleAccount {
+  shop          String   @id
+  refreshToken  String?
+  spreadsheetId String?
+  updatedAt     DateTime @updatedAt
+}

@@ -9,14 +9,6 @@ import dotenv from "dotenv";
 const repoRootEnvPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".env");
 dotenv.config({ path: repoRootEnvPath });
 
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
 export const config = {
   shopify: {
     // No shop/accessToken here by design — those come from per-shop OAuth
@@ -26,17 +18,9 @@ export const config = {
       return process.env.SHOPIFY_API_VERSION ?? "2026-07";
     },
   },
-  google: {
-    get serviceAccountEmail() {
-      return required("GOOGLE_SERVICE_ACCOUNT_EMAIL");
-    },
-    get privateKey() {
-      return required("GOOGLE_PRIVATE_KEY").replace(/\\n/g, "\n");
-    },
-    get sheetId() {
-      return required("GOOGLE_SHEET_ID");
-    },
-  },
+  // No Google config here by design — Sheets access is now per-merchant
+  // OAuth (see src/sheets/googleAuth.ts's GoogleOAuthConfig / GoogleContext),
+  // stored per shop, never a single global service account or sheet ID.
   get lookbackDays() {
     return Number(process.env.LOOKBACK_DAYS ?? 30);
   },

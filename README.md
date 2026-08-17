@@ -1,55 +1,48 @@
 # Margin Tracker
 
 Finds which Shopify products are selling at a thin or negative margin, reports
-it into a Google Sheet, and lets you push price/cost fixes back to Shopify
-safely (preview + confirm + one-command undo).
+it into a Google Sheet in the merchant's own Drive, and lets you push
+price/cost fixes back to Shopify safely (preview + confirm + one-command
+undo).
 
 See [`docs/free-diagnostic-spec.md`](docs/free-diagnostic-spec.md) for the
 GraphQL queries and sheet layout this implements.
 
 ## Setup
 
-This root project is now the **CLI-only** path (`npm run diagnostic` /
-`preview` / `apply` / `undo`) — the real installable app with per-shop OAuth
-lives in [`app/`](#the-app-directory) and has its own setup steps.
+This root project is now a **Shopify-only CLI** (`npm run diagnostic`) plus
+the shared library the real app reuses — Google Sheets access moved to
+per-merchant OAuth, which needs a browser, so `preview`/`apply`/`undo`'s
+Sheet-reading steps only work from the installed app now (see
+[`app/`](#the-app-directory), which has its own setup steps).
 
 1. **Shopify custom app** (for the CLI only — the app in `app/` doesn't use
    this) — in your dev store: Settings → Apps and sales channels → Develop
    apps → Create an app. Grant `read_products`, `read_orders`,
    `read_inventory`, `write_products`, `write_inventory`, then install it and
    copy the Admin API access token.
-2. **Google service account** (used by both the CLI and the app) — in Google
-   Cloud Console: create a project, enable the Google Sheets API, create a
-   service account, download its JSON key. Create a Google Sheet and share it
-   with the service account's email (Editor access).
-3. Copy `.env.example` to `.env`, fill in the Google credentials, and
-   uncomment/fill in `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` if you want to use
-   the CLI.
-4. `npm install`
+2. Copy `.env.example` to `.env` and uncomment/fill in
+   `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN`.
+3. `npm install`
 
 ## Usage
 
-Run these in order:
-
 ```bash
 npm run diagnostic   # read-only: pulls products, cost, and 30-day sales,
-                      # writes the Diagnostic + Fix tabs in your Sheet
+                      # prints the results (below-cost/low-margin counts,
+                      # amount lost) to the console
 
-# ...open the Sheet, look at the Diagnostic tab, fill in New Price / New
-# Cost on the Fix tab for whatever you want to change...
-
-npm run preview       # read-only: shows what would change and flags
-                       # anything that would go below cost or hit 0
-
-npm run apply          # prints the same preview, asks you to type YES,
-                        # snapshots the old prices/costs to ./backups/,
-                        # then writes the new prices/costs to Shopify
-
-npm run undo            # restores the most recent backup snapshot
+npm run undo          # restores the most recent backup snapshot made by the
+                       # app's "Push changes" flow, from this machine's
+                       # ./backups/ — only useful if you're also running the
+                       # app locally against the same store
 ```
 
-`apply` always snapshots before it writes anything, and always shows the
-preview + confirmation prompt first — there is no flag to skip either step.
+`npm run preview` and `npm run apply` print an explanation and exit non-zero:
+reading the Fix tab now means reading a Google Sheet connected via
+per-merchant OAuth, which needs a real browser to authorize — use the
+app's "Push changes" button instead, which previews the same way before
+asking you to confirm.
 
 ## What "margin" means here
 
@@ -75,7 +68,9 @@ src/
   margin/
     calculate.ts             margin %, revenue/profit aggregation, sorting
   sheets/
-    client.ts                 Google Sheets auth + read/write helpers
+    client.ts                 Sheets read/write helpers, takes a GoogleContext
+    googleAuth.ts               OAuth client, auth URL, token exchange,
+                                  state signing (shared with the app)
     diagnosticSheet.ts         Diagnostic + Fix tab layout and writing
     fixSheet.ts                 reads merchant-entered New Price/New Cost
   pipeline/
@@ -92,6 +87,13 @@ no global "the current shop." The CLI builds one from
 `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` (`devShopContext.ts`); the app in
 `app/` builds one from the authenticated OAuth session for each request.
 
+Every Sheets-facing function (`writeDiagnostic`, `readFixEntries`, etc.) takes
+a `GoogleContext { auth, spreadsheetId }` the same way — `auth` is an OAuth2
+client built from a merchant's stored refresh token, `spreadsheetId` is the
+sheet the app created in their Drive. There's no CLI equivalent of
+`devShopContext.ts` for Google: connecting requires a browser, so only the
+app can build one (see `app/app/google-auth.server.ts`).
+
 The four `npm run diagnostic/preview/apply/undo` entry points live in
 `pipeline/cli/`, separate from the functions they call, rather than each
 pipeline file running itself when invoked directly (`if (import.meta.url ===
@@ -107,9 +109,6 @@ that impossible by construction, not just by careful coding.
 
 - Weekly automated re-check + email alert (the "watchman" subscription
   feature).
-- Google OAuth per merchant — Sheets access still uses a single shared
-  service account and a single `GOOGLE_SHEET_ID`, for both the CLI and the
-  app. Shopify access is now per-shop OAuth (see below); Google isn't yet.
 - History/undo in the app's UI, scheduled re-check, and deployment — see the
   phase notes in `app/`'s own history for what's planned next.
 
@@ -153,21 +152,59 @@ Every route builds a `ShopContext` from `session.shop` /
 the only place an access token exists in memory outside the encrypted
 session store. It's never logged and never sent to the browser.
 
+### Google Sheets access
+
+Each merchant connects their own Google account — there's no shared service
+account or `GOOGLE_SHEET_ID` anymore. From the dashboard's "Connect Google"
+link, OAuth requests just
+[`drive.file`](https://developers.google.com/workspace/drive/api/guides/api-specific-auth),
+not the broader `spreadsheets` scope: the app only ever creates the
+spreadsheet it writes to and never asks a merchant to point it at an existing
+one, so per-file access to files the app itself created is enough, and a
+compromised token can't read or touch anything else in their Drive. The
+refresh token is encrypted (`app/app/crypto.server.ts`, the same AES-256-GCM
+scheme sessions use) and stored per shop
+(`app/app/google-account.server.ts`), alongside the ID of the spreadsheet
+created the first time that shop clicked "Create sheet."
+
+Set up a Google Cloud OAuth client (APIs & Services → Credentials → Create
+OAuth client ID → Web application), enable the Google Sheets API and Google
+Drive API on that project, and add these to `app/.env`:
+
+```bash
+GOOGLE_OAUTH_CLIENT_ID=xxxx.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=xxxx
+```
+
+Add `${SHOPIFY_APP_URL}/auth/google/callback` as an authorized redirect URI
+on that OAuth client — that URL is computed from `SHOPIFY_APP_URL` (already
+required for Shopify OAuth), not a separate env var, so it stays correct
+whenever the tunnel URL changes during local dev.
+
+If a merchant's refresh token gets revoked (they remove the app's access in
+their Google account, or it simply expires), the next Sheets call fails with
+Google's `invalid_grant` error; the app catches that specifically
+(`isGoogleReauthError`), clears the stored refresh token — keeping the
+spreadsheetId link so reconnecting resumes the same sheet instead of
+creating a new one — and the dashboard falls back to the "Connect Google"
+empty state instead of showing a crash.
+
 ### GDPR webhooks
 
 `customers/data_request`, `customers/redact`, and `shop/redact` are wired up
 (`app/app/routes/webhooks.*.tsx`) and declared in `shopify.app.toml`. The
 first two are no-ops — this app never stores customer PII. `shop/redact`
-(and the existing `app/uninstalled` handler) delete that shop's session(s)
-and its cached diagnostic (`app/app/diagnostic-cache.server.ts`, now a
-Prisma model instead of the in-memory Map from earlier phases).
+(and the existing `app/uninstalled` handler) delete that shop's session(s),
+its cached diagnostic (`app/app/diagnostic-cache.server.ts`), and its Google
+connection (`app/app/google-account.server.ts`) — refresh token and
+spreadsheetId link both gone, not just invalidated.
 
 To work on it:
 
 ```bash
 cd app
 npm install   # already done once during scaffolding, but harmless to rerun
-npx prisma migrate dev   # applies the Session + DiagnosticCache migrations
+npx prisma migrate dev   # applies the Session/DiagnosticCache/GoogleAccount migrations
 npm run dev   # runs `shopify app dev` — requires you to be logged into
               # your Shopify Partner account; it will prompt to log in
               # and to link this project to an app in your organization

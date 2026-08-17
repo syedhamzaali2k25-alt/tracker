@@ -1,3 +1,4 @@
+import type { GoogleContext } from "../sheets/client.js";
 import { changedEntries, readFixEntries, type FixEntry } from "../sheets/fixSheet.js";
 
 export interface ChangePreview {
@@ -67,11 +68,12 @@ export function printPreview(preview: ChangePreview): void {
 }
 
 export async function buildPreviewFromSheet(
+  ctx: GoogleContext,
   onProgress?: (message: string) => void,
 ): Promise<ChangePreview> {
   const report = onProgress ?? (() => {});
   report("Reading the Fix tab...");
-  const entries = await readFixEntries();
+  const entries = await readFixEntries(ctx);
   const changed = changedEntries(entries);
   return buildPreview(changed);
 }

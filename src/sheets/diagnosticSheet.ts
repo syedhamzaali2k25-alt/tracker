@@ -1,5 +1,5 @@
 import type { DiagnosticSummary, MarginRow } from "../types.js";
-import { clearRange, ensureTab, writeRange } from "./client.js";
+import { clearRange, ensureTab, writeRange, type GoogleContext } from "./client.js";
 import { buildPendingEditsMap, readFixEntries, type PendingEdit } from "./fixSheet.js";
 
 export const DIAGNOSTIC_TAB = "Diagnostic";
@@ -98,26 +98,27 @@ export function buildFixRows(
 }
 
 export async function writeDiagnostic(
+  ctx: GoogleContext,
   rows: MarginRow[],
   summary: DiagnosticSummary,
 ): Promise<{ preservedCount: number }> {
-  await ensureTab(DIAGNOSTIC_TAB);
-  await ensureTab(FIX_TAB);
+  await ensureTab(ctx, DIAGNOSTIC_TAB);
+  await ensureTab(ctx, FIX_TAB);
 
-  const pendingEdits = buildPendingEditsMap(await readFixEntries());
+  const pendingEdits = buildPendingEditsMap(await readFixEntries(ctx));
 
-  await clearRange(`${DIAGNOSTIC_TAB}!A1:Z10000`);
+  await clearRange(ctx, `${DIAGNOSTIC_TAB}!A1:Z10000`);
   const diagnosticValues = [
     ...summaryRows(summary),
     DIAGNOSTIC_HEADER,
     ...rows.map(diagnosticDataRow),
   ];
-  await writeRange(`${DIAGNOSTIC_TAB}!A1`, diagnosticValues);
+  await writeRange(ctx, `${DIAGNOSTIC_TAB}!A1`, diagnosticValues);
 
   const { values: fixDataRows, preservedCount } = buildFixRows(rows, pendingEdits);
-  await clearRange(`${FIX_TAB}!A1:Z10000`);
+  await clearRange(ctx, `${FIX_TAB}!A1:Z10000`);
   const fixValues = [FIX_HEADER, ...fixDataRows];
-  await writeRange(`${FIX_TAB}!A1`, fixValues);
+  await writeRange(ctx, `${FIX_TAB}!A1`, fixValues);
 
   return { preservedCount };
 }

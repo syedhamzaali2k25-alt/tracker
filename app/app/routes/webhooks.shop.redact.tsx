@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { deleteCachedDiagnostic } from "../diagnostic-cache.server";
+import { deleteGoogleConnection } from "../google-account.server";
 
 /**
  * Mandatory GDPR webhook: sent 48 hours after a store owner uninstalls the
@@ -16,6 +17,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   await db.session.deleteMany({ where: { shop } });
   await deleteCachedDiagnostic(shop);
+  await deleteGoogleConnection(shop);
 
   return new Response();
 };

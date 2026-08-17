@@ -1,5 +1,5 @@
 import { FIX_TAB } from "./diagnosticSheet.js";
-import { readRange } from "./client.js";
+import { readRange, type GoogleContext } from "./client.js";
 
 export interface FixEntry {
   productTitle: string;
@@ -122,8 +122,8 @@ export function parseFixRow(row: string[]): ParsedFixRow {
   };
 }
 
-export async function readFixEntries(): Promise<FixEntry[]> {
-  const values = await readRange(`${FIX_TAB}!A2:J`);
+export async function readFixEntries(ctx: GoogleContext): Promise<FixEntry[]> {
+  const values = await readRange(ctx, `${FIX_TAB}!A2:J`);
   const entries: FixEntry[] = [];
 
   for (const row of values) {
