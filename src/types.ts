@@ -25,3 +25,18 @@ export interface DiagnosticSummary {
   noCostCount: number;
   currencyCode: string;
 }
+
+/**
+ * The before-values for one variant touched by an applyChanges() run —
+ * enough to restore it later. Persisted as part of a push batch (see
+ * app/app/push-batch.server.ts); src/ itself never stores these.
+ */
+export interface PushBatchEntry {
+  productId: string;
+  variantId: string;
+  inventoryItemId: string;
+  productTitle: string;
+  variantTitle: string;
+  price: number;
+  cost: number | null;
+}

@@ -56,3 +56,23 @@ model GoogleAccount {
   spreadsheetId String?
   updatedAt     DateTime @updatedAt
 }
+
+// One row per applyChanges() run, written before any Shopify writes happen
+// so a failed apply still leaves a durable record of what was about to
+// change. Replaces the old ./backups/*.json files — history now lives here,
+// per shop, instead of on whatever machine happened to run the apply.
+model PushBatch {
+  id          String   @id @default(cuid())
+  shop        String
+  createdAt   DateTime @default(now())
+  changeCount Int
+  // JSON-serialized PushBatchEntry[] (src/types.ts) — the before-values for
+  // every variant this batch touched, needed to undo it.
+  entries     String
+  // Set once this batch has been undone, so it can't be applied a second
+  // time. Undoing writes new price/cost values of its own — there's nothing
+  // to "re-revert" to after that.
+  reverted    Boolean  @default(false)
+
+  @@index([shop, createdAt])
+}

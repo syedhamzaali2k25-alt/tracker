@@ -2,8 +2,8 @@
 
 Finds which Shopify products are selling at a thin or negative margin, reports
 it into a Google Sheet in the merchant's own Drive, and lets you push
-price/cost fixes back to Shopify safely (preview + confirm + one-command
-undo).
+price/cost fixes back to Shopify safely (preview + confirm + a History page
+with per-push undo).
 
 See [`docs/free-diagnostic-spec.md`](docs/free-diagnostic-spec.md) for the
 GraphQL queries and sheet layout this implements.
@@ -31,18 +31,16 @@ Sheet-reading steps only work from the installed app now (see
 npm run diagnostic   # read-only: pulls products, cost, and 30-day sales,
                       # prints the results (below-cost/low-margin counts,
                       # amount lost) to the console
-
-npm run undo          # restores the most recent backup snapshot made by the
-                       # app's "Push changes" flow, from this machine's
-                       # ./backups/ — only useful if you're also running the
-                       # app locally against the same store
 ```
 
-`npm run preview` and `npm run apply` print an explanation and exit non-zero:
-reading the Fix tab now means reading a Google Sheet connected via
-per-merchant OAuth, which needs a real browser to authorize — use the
-app's "Push changes" button instead, which previews the same way before
-asking you to confirm.
+`npm run preview`, `npm run apply`, and `npm run undo` all print an
+explanation and exit non-zero now: reading the Fix tab means reading a Google
+Sheet connected via per-merchant OAuth (needs a real browser to authorize),
+and push batches — the before-values saved by each "Push changes" run — live
+per shop in the app's database rather than as files on whatever machine ran
+the apply. Use the app instead: its "Push changes" button previews the same
+way before asking you to confirm, and its History page lists every past
+batch with an Undo button.
 
 ## What "margin" means here
 
@@ -75,8 +73,11 @@ src/
     fixSheet.ts                 reads merchant-entered New Price/New Cost
   pipeline/
     runDiagnostic.ts, previewChanges.ts, applyChanges.ts, undo.ts
-                                    exported functions, reused by the app
-    backup.ts, devShopContext.ts   shared helpers
+                                    exported functions, reused by the app —
+                                    applyChanges()/undoBatch() take a
+                                    PushBatchRecorder/entries the app supplies
+                                    rather than touching a database directly
+    devShopContext.ts              shared CLI helper
     cli/                           `npm run diagnostic/preview/apply/undo`
                                     entry points (see below)
 ```
@@ -109,8 +110,8 @@ that impossible by construction, not just by careful coding.
 
 - Weekly automated re-check + email alert (the "watchman" subscription
   feature).
-- History/undo in the app's UI, scheduled re-check, and deployment — see the
-  phase notes in `app/`'s own history for what's planned next.
+- Scheduled re-check and deployment — see the phase notes in `app/`'s own
+  history for what's planned next.
 
 ## The `app/` directory
 
@@ -189,22 +190,46 @@ spreadsheetId link so reconnecting resumes the same sheet instead of
 creating a new one — and the dashboard falls back to the "Connect Google"
 empty state instead of showing a crash.
 
+### Push history and undo
+
+Every `applyChanges()` run (the "Push changes" flow) writes a `PushBatch` row
+— shop, timestamp, change count, and the before-values for every variant it's
+about to touch — *before* making any Shopify writes, so even a run that fails
+partway through leaves a record of what it was about to change
+(`app/prisma/schema.prisma`, written via `app/app/push-batch.server.ts`).
+`applyChanges()` itself never touches Prisma directly: it takes a
+`PushBatchRecorder` the app supplies, the same way it already takes a
+`ShopContext` instead of assuming a global "current shop."
+
+The History page (`app/app/routes/app.history.tsx`) lists a shop's batches
+newest first, with a date, change count, and status per row. Undo asks for
+confirmation in a modal, then calls `undoBatch()` (`src/pipeline/undo.ts`)
+with that specific batch's saved entries and marks the batch `reverted` in
+the database so it can't be applied a second time. `getPushBatch()` scopes
+every lookup to the requesting shop, so one merchant can't undo another's
+batch by ID even if they had one. Restoring a null cost back to "no cost
+recorded" uses the same `costClearFailed()` check as a normal apply
+(`src/shopify/mutations.ts`) — Shopify's cost-clear mutation can silently
+no-op, so undo verifies the clear actually took effect instead of trusting
+the request succeeded.
+
 ### GDPR webhooks
 
 `customers/data_request`, `customers/redact`, and `shop/redact` are wired up
 (`app/app/routes/webhooks.*.tsx`) and declared in `shopify.app.toml`. The
 first two are no-ops — this app never stores customer PII. `shop/redact`
 (and the existing `app/uninstalled` handler) delete that shop's session(s),
-its cached diagnostic (`app/app/diagnostic-cache.server.ts`), and its Google
+its cached diagnostic (`app/app/diagnostic-cache.server.ts`), its Google
 connection (`app/app/google-account.server.ts`) — refresh token and
-spreadsheetId link both gone, not just invalidated.
+spreadsheetId link both gone, not just invalidated — and its push batch
+history (`app/app/push-batch.server.ts`).
 
 To work on it:
 
 ```bash
 cd app
 npm install   # already done once during scaffolding, but harmless to rerun
-npx prisma migrate dev   # applies the Session/DiagnosticCache/GoogleAccount migrations
+npx prisma migrate dev   # applies the Session/DiagnosticCache/GoogleAccount/PushBatch migrations
 npm run dev   # runs `shopify app dev` — requires you to be logged into
               # your Shopify Partner account; it will prompt to log in
               # and to link this project to an app in your organization

@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { deleteCachedDiagnostic } from "../diagnostic-cache.server";
 import { deleteGoogleConnection } from "../google-account.server";
+import { deletePushBatches } from "../push-batch.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, session, topic } = await authenticate.webhook(request);
@@ -16,6 +17,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
   await deleteCachedDiagnostic(shop);
   await deleteGoogleConnection(shop);
+  await deletePushBatches(shop);
 
   return new Response();
 };

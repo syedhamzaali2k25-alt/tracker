@@ -14,6 +14,7 @@ import {
   type ChangePreview,
 } from "~lib/pipeline/previewChanges.js";
 import { applyChanges, type ApplyChangesResult } from "~lib/pipeline/applyChanges.js";
+import { prismaPushBatchRecorder } from "../push-batch.server";
 import { createSpreadsheet, type GoogleContext } from "~lib/sheets/client.js";
 import { writeDiagnostic } from "~lib/sheets/diagnosticSheet.js";
 import type { FixEntry } from "~lib/sheets/fixSheet.js";
@@ -209,7 +210,7 @@ export const action = async ({
       const shopContext = toShopContext(session);
       console.log(`[action] intent=apply session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
       const entries = JSON.parse(String(formData.get("entries"))) as FixEntry[];
-      const result = await applyChanges(shopContext, entries);
+      const result = await applyChanges(shopContext, entries, prismaPushBatchRecorder);
       return { result } satisfies ApplyResult;
     }
 

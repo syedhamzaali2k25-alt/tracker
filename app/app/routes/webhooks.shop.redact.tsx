@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { deleteCachedDiagnostic } from "../diagnostic-cache.server";
 import { deleteGoogleConnection } from "../google-account.server";
+import { deletePushBatches } from "../push-batch.server";
 
 /**
  * Mandatory GDPR webhook: sent 48 hours after a store owner uninstalls the
@@ -18,6 +19,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   await db.session.deleteMany({ where: { shop } });
   await deleteCachedDiagnostic(shop);
   await deleteGoogleConnection(shop);
+  await deletePushBatches(shop);
 
   return new Response();
 };
