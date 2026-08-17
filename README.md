@@ -110,9 +110,8 @@ that impossible by construction, not just by careful coding.
 ## Not built yet
 
 - Weekly automated re-check + email alert (the "watchman" subscription
-  feature).
-- Scheduled re-check and deployment — see the phase notes in `app/`'s own
-  history for what's planned next.
+  feature) — deployment is ready for it (see "Deploying" below), but the
+  job itself doesn't exist yet.
 
 ## The `app/` directory
 
@@ -127,20 +126,38 @@ The margin/Shopify/Sheets logic in `src/` is reused from inside `app/` via a
 `~lib/*` path alias (`app/tsconfig.json`) pointing at `../src/*`, rather than
 being duplicated.
 
+### Environment variables
+
+Every variable the deployed app reads, in one place. Set these wherever you
+deploy (Railway/Render/Fly's dashboard or CLI) — `app/.env` (copy from
+`app/.env.example`) is only for local dev, and is never read in production
+(nothing loads dotenv there; the host injects real process env vars
+instead).
+
+| Variable | Required | What it's for |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | Postgres connection string (`postgresql://user:pass@host:5432/db`). Your host's Postgres add-on provides this. |
+| `SHOPIFY_API_KEY` | Yes | From `shopify.app.toml`'s `client_id` / the Partner Dashboard's app credentials. |
+| `SHOPIFY_API_SECRET` | Yes | The matching client secret, Partner Dashboard → app → API credentials. |
+| `SHOPIFY_APP_URL` | Yes | The app's public URL. Also used to derive the Google OAuth redirect URI (`${SHOPIFY_APP_URL}/auth/google/callback`) — no separate var for that. |
+| `SESSION_ENCRYPTION_KEY` | Yes | 64 hex chars (32 bytes). Encrypts Shopify session tokens and Google refresh tokens at rest. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Losing/rotating this invalidates every stored session and Google connection — merchants would need to reinstall/reconnect. |
+| `GOOGLE_OAUTH_CLIENT_ID` | Yes | Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web application). |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Yes | The matching secret from that same OAuth client. |
+| `SHOP_CUSTOM_DOMAIN` | No | Only if you support a merchant's custom domain on the storefront side; see the Shopify template's own docs. Unset by default. |
+| `PORT` | No | `@react-router/serve` listens on this; your host sets it automatically (Railway/Render/Fly all do). Defaults to 3000 if unset. |
+| `NODE_ENV` | No | Already set to `production` in the Dockerfile; most hosts also set this themselves. |
+| `SHOPIFY_API_VERSION` | No | Shopify Admin API version the GraphQL client targets (`src/config.ts`). Defaults to `2026-07`. |
+| `LOOKBACK_DAYS` | No | How many days of orders "units sold" aggregates over. Defaults to `30`. |
+| `LOW_MARGIN_THRESHOLD` | No | Margin % below which a product is flagged. Defaults to `0.20`. |
+
 ### Authentication
 
 The app authenticates each shop via real OAuth (not the CLI's static
 token) — install flow, session storage, the works. Sessions are stored in
-SQLite via Prisma (`app/prisma/schema.prisma`), wrapped in an encrypting
+Postgres via Prisma (`app/prisma/schema.prisma`), wrapped in an encrypting
 layer (`app/app/encrypted-session-storage.server.ts`) so access tokens are
-never written to disk in plaintext. That wrapper needs one more env var in
-`app/.env`:
-
-```bash
-SESSION_ENCRYPTION_KEY=<64 hex chars>
-# generate one with:
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+never written to disk in plaintext — that's what `SESSION_ENCRYPTION_KEY`
+above is for.
 
 The five scopes the app requests during OAuth (`read_products`,
 `read_orders`, `read_inventory`, `write_products`, `write_inventory`) are
@@ -171,17 +188,12 @@ created the first time that shop clicked "Create sheet."
 
 Set up a Google Cloud OAuth client (APIs & Services → Credentials → Create
 OAuth client ID → Web application), enable the Google Sheets API and Google
-Drive API on that project, and add these to `app/.env`:
-
-```bash
-GOOGLE_OAUTH_CLIENT_ID=xxxx.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=xxxx
-```
-
-Add `${SHOPIFY_APP_URL}/auth/google/callback` as an authorized redirect URI
-on that OAuth client — that URL is computed from `SHOPIFY_APP_URL` (already
-required for Shopify OAuth), not a separate env var, so it stays correct
-whenever the tunnel URL changes during local dev.
+Drive API on that project, and set `GOOGLE_OAUTH_CLIENT_ID`/
+`GOOGLE_OAUTH_CLIENT_SECRET` (see the table above). Add
+`${SHOPIFY_APP_URL}/auth/google/callback` as an authorized redirect URI on
+that OAuth client — that URL is computed from `SHOPIFY_APP_URL`, not a
+separate env var, so it stays correct whenever the tunnel URL changes
+during local dev or the app moves hosts.
 
 If a merchant's refresh token gets revoked (they remove the app's access in
 their Google account, or it simply expires), the next Sheets call fails with
@@ -227,8 +239,83 @@ To work on it:
 ```bash
 cd app
 npm install   # already done once during scaffolding, but harmless to rerun
-npx prisma migrate dev   # applies the Session/DiagnosticCache/GoogleAccount/PushBatch migrations
+npx prisma migrate dev   # applies migrations against your local Postgres —
+                          # see "Deploying" below for how to get one running
 npm run dev   # runs `shopify app dev` — requires you to be logged into
               # your Shopify Partner account; it will prompt to log in
               # and to link this project to an app in your organization
 ```
+
+### Deploying
+
+**Railway** is the pick here, over Render or Fly. All three can run a
+Node/Postgres app fine, but the deciding factor is the still-unbuilt Phase 5
+weekly re-check: it needs a real cron schedule (once a week, not "roughly
+periodically"), running as its own process against the same codebase and
+database.
+
+- **Railway** has a first-class Cron Job service type: point it at this repo
+  with a different start command and a cron expression, and it runs on
+  schedule, then exits — billed only for the seconds it runs, no
+  always-on worker needed. Straightforward Postgres add-on, Dockerfile
+  builds supported natively.
+- **Render** also has a native Cron Jobs resource — equally capable — but
+  it's gated to paid plans (no free-tier cron), and its Postgres and cron
+  are configured as more separate, more clicks-in-the-dashboard pieces than
+  Railway's single project holding both.
+- **Fly.io** has no first-party cron resource. The closest thing is a
+  Fly Machine's built-in `schedule` field (`hourly`/`daily`/`monthly`) —
+  coarser than a real cron expression, so a *weekly* job means running it
+  daily and having the job itself check "is today the right day," or
+  reaching for an external trigger (e.g. a GitHub Actions cron hitting a
+  webhook route). Doable, but it's the one place Fly is a worse fit for
+  what this app specifically needs.
+
+None of that changes if you'd rather use Render — the app itself doesn't
+care which host runs it, this is purely about which one makes the
+scheduled-job piece easiest.
+
+**Steps (Railway):**
+
+1. Create a Postgres database in your Railway project — this gives you
+   `DATABASE_URL` automatically as a reference variable.
+2. Add a second service from the same GitHub repo for the web app. In its
+   settings:
+   - **Root Directory**: the repo root (leave unset / `.`) — **not** `app/`.
+     `app/tsconfig.json`'s `~lib/*` alias resolves to `../src/*`, and that
+     code's own dependencies (`dotenv`, `googleapis`) resolve against the
+     repo root's `node_modules`, not `app/`'s. The Dockerfile needs the
+     whole monorepo as build context to see any of that — see the comment
+     at the top of `app/Dockerfile` for exactly what breaks if you get this
+     wrong (it's not hypothetical; a repo-root-only build context fails
+     with "Rollup failed to resolve import googleapis").
+   - **Dockerfile Path**: `app/Dockerfile`.
+   - Railway auto-detects `app/railway.json` for the build settings and
+     health check path once it finds the Dockerfile there.
+3. Set the environment variables from the table above on the web service
+   (reference the Postgres service's `DATABASE_URL` rather than
+   copy-pasting it, so it stays correct if the database ever moves).
+4. Deploy. The image's `CMD` is `npm run docker-start`, which runs
+   `prisma generate && prisma migrate deploy` — applying committed
+   migrations in order, non-interactively, failing loudly on conflicts —
+   **before** starting the server. It never runs `prisma db push`, which
+   doesn't create migration history and isn't appropriate for a database
+   holding real merchant data.
+5. Point `SHOPIFY_APP_URL` at Railway's public domain for this service, set
+   `application_url` and `[auth] redirect_urls` in `shopify.app.toml` to
+   match (this repo's `shopify.app.toml` doesn't have those two yet — it's
+   never been linked to a real Partner Dashboard app via `shopify app config
+   link`, only scaffolded), then run `shopify app deploy` to push that
+   config to Shopify.
+6. Confirm `GET /health` returns `200 ok` — it pings the database
+   (`SELECT 1`) rather than just confirming the process is alive, so a bad
+   `DATABASE_URL` or an unreachable Postgres fails the check instead of the
+   deploy going live unable to serve a single real request. Railway polls
+   this automatically once `railway.json`'s `healthcheckPath` is picked up.
+
+**When Phase 5 gets built**, its cron job becomes a second Railway service
+in the same project: same repo, same Dockerfile, a `startCommand` override
+(something like `npm run --prefix app watchman:run` once that script
+exists) instead of `npm run docker-start`, and a cron expression on a
+weekly cadence. It reads the same `DATABASE_URL`/Shopify session storage
+the web service does — no extra plumbing beyond the schedule itself.

@@ -9,14 +9,14 @@ node_modules
 /public/build/
 /public/_dev
 /app/public/build
-/prisma/dev.sqlite
-/prisma/dev.sqlite-journal
-database.sqlite
 
 .env
 .env.*
+!.env.example
 
-package-lock.json
+# package-lock.json is intentionally tracked (not ignored) — npm ci in
+# Dockerfile/CI needs it, and a fresh git clone (which is exactly what
+# Railway/Render/Fly build from) won't have one otherwise.
 yarn.lock
 pnpm-lock.yaml
 
