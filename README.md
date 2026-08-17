@@ -141,6 +141,13 @@ SESSION_ENCRYPTION_KEY=<64 hex chars>
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
+The five scopes the app requests during OAuth (`read_products`,
+`read_orders`, `read_inventory`, `write_products`, `write_inventory`) are
+declared in `app/app/scopes.server.ts`, kept in sync by hand with
+`shopify.app.toml`'s `[access_scopes]` (the file `shopify app deploy`
+registers with Shopify) — there's no `SCOPES` env var. If you add a scope,
+update both files.
+
 Every route builds a `ShopContext` from `session.shop` /
 `session.accessToken` for that request — never from a global — and that's
 the only place an access token exists in memory outside the encrypted
