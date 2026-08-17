@@ -1,31 +1,39 @@
 import type { ShopContext } from "../shopify/client.js";
 import { applyCostUpdates, applyPriceUpdates } from "../shopify/mutations.js";
 import type { FixEntry } from "../sheets/fixSheet.js";
-import { saveBackup, type BackupEntry } from "./backup.js";
+import type { BackupEntry } from "../types.js";
 
 export interface ApplyChangesResult {
   pricesUpdated: number;
   costsUpdated: number;
-  /** Path/identifier of the snapshot saved before writing, for undoLatest(). Empty when there was nothing to apply. */
-  backupId: string;
+  /** ID of the push-batch row saved before writing, for undo. Empty when there was nothing to apply. */
+  batchId: string;
 }
 
 /**
+ * Persists a batch's before-values somewhere durable and returns an ID for
+ * it. Left to the caller rather than baked in here: the app backs this with
+ * a database table (app/app/push-batches.server.ts), and this shared
+ * pipeline code has no database of its own to reach for.
+ */
+export type SaveBatch = (shop: string, entries: BackupEntry[]) => Promise<string>;
+
+/**
  * Writes already-confirmed price/cost changes to Shopify. Never prompts —
- * the caller (CLI wrapper below, or the app's confirmation modal) is
- * responsible for deciding these entries should be applied before calling
- * this. Always snapshots the pre-change values first, unless there's
- * nothing to do.
+ * the caller (the app's confirmation modal) is responsible for deciding
+ * these entries should be applied before calling this. Always saves a batch
+ * of the pre-change values first, unless there's nothing to do.
  */
 export async function applyChanges(
   shopContext: ShopContext,
   confirmedEntries: FixEntry[],
+  saveBatch: SaveBatch,
   onProgress?: (message: string) => void,
 ): Promise<ApplyChangesResult> {
   const report = onProgress ?? (() => {});
 
   if (confirmedEntries.length === 0) {
-    return { pricesUpdated: 0, costsUpdated: 0, backupId: "" };
+    return { pricesUpdated: 0, costsUpdated: 0, batchId: "" };
   }
 
   const backupEntries: BackupEntry[] = confirmedEntries.map((e) => ({
@@ -37,8 +45,8 @@ export async function applyChanges(
     price: e.currentPrice,
     cost: e.currentCost,
   }));
-  const backupId = await saveBackup(backupEntries);
-  report(`Saved a snapshot of the old prices/costs to ${backupId}`);
+  const batchId = await saveBatch(shopContext.shop, backupEntries);
+  report(`Saved a snapshot of the old prices/costs (batch ${batchId}).`);
 
   const priceUpdates = confirmedEntries
     .filter((e) => e.newPrice !== null)
@@ -58,5 +66,5 @@ export async function applyChanges(
 
   report("Done.");
 
-  return { pricesUpdated: priceUpdates.length, costsUpdated: costUpdates.length, backupId };
+  return { pricesUpdated: priceUpdates.length, costsUpdated: costUpdates.length, batchId };
 }

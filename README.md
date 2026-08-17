@@ -2,8 +2,8 @@
 
 Finds which Shopify products are selling at a thin or negative margin, reports
 it into a Google Sheet in the merchant's own Drive, and lets you push
-price/cost fixes back to Shopify safely (preview + confirm + one-command
-undo).
+price/cost fixes back to Shopify safely (preview + confirm + undo any past
+push from a History page).
 
 See [`docs/free-diagnostic-spec.md`](docs/free-diagnostic-spec.md) for the
 GraphQL queries and sheet layout this implements.
@@ -31,18 +31,14 @@ Sheet-reading steps only work from the installed app now (see
 npm run diagnostic   # read-only: pulls products, cost, and 30-day sales,
                       # prints the results (below-cost/low-margin counts,
                       # amount lost) to the console
-
-npm run undo          # restores the most recent backup snapshot made by the
-                       # app's "Push changes" flow, from this machine's
-                       # ./backups/ — only useful if you're also running the
-                       # app locally against the same store
 ```
 
-`npm run preview` and `npm run apply` print an explanation and exit non-zero:
-reading the Fix tab now means reading a Google Sheet connected via
-per-merchant OAuth, which needs a real browser to authorize — use the
-app's "Push changes" button instead, which previews the same way before
-asking you to confirm.
+`npm run preview`, `npm run apply`, and `npm run undo` all print an
+explanation and exit non-zero instead of doing anything: reading the Fix tab
+means reading a Google Sheet connected via per-merchant OAuth (needs a real
+browser to authorize), and push history now lives in the app's database, not
+a local `./backups/` folder — both only work from the installed app now. Use
+its "Push changes" button and History page instead.
 
 ## What "margin" means here
 
@@ -76,7 +72,7 @@ src/
   pipeline/
     runDiagnostic.ts, previewChanges.ts, applyChanges.ts, undo.ts
                                     exported functions, reused by the app
-    backup.ts, devShopContext.ts   shared helpers
+    devShopContext.ts              CLI-only ShopContext fallback
     cli/                           `npm run diagnostic/preview/apply/undo`
                                     entry points (see below)
 ```
@@ -94,6 +90,12 @@ sheet the app created in their Drive. There's no CLI equivalent of
 `devShopContext.ts` for Google: connecting requires a browser, so only the
 app can build one (see `app/app/google-auth.server.ts`).
 
+`applyChanges()` takes a third `saveBatch` parameter the same way, rather
+than importing a way to persist a snapshot itself — it's a plain
+`(shop, entries) => Promise<batchId>` function, backed by a database table
+in the app (`app/app/push-batches.server.ts`) instead of anything in `src/`,
+since this shared pipeline code has no database of its own to reach for.
+
 The four `npm run diagnostic/preview/apply/undo` entry points live in
 `pipeline/cli/`, separate from the functions they call, rather than each
 pipeline file running itself when invoked directly (`if (import.meta.url ===
@@ -109,8 +111,8 @@ that impossible by construction, not just by careful coding.
 
 - Weekly automated re-check + email alert (the "watchman" subscription
   feature).
-- History/undo in the app's UI, scheduled re-check, and deployment — see the
-  phase notes in `app/`'s own history for what's planned next.
+- Scheduled re-check and deployment — see the phase notes in `app/`'s own
+  history for what's planned next.
 
 ## The `app/` directory
 
@@ -189,22 +191,43 @@ spreadsheetId link so reconnecting resumes the same sheet instead of
 creating a new one — and the dashboard falls back to the "Connect Google"
 empty state instead of showing a crash.
 
+### Push history
+
+Every `applyChanges()` run saves a `PushBatch` row — shop, timestamp, how
+many variants it touched, and the price/cost each of those variants had
+right before the push — before writing anything to Shopify
+(`app/app/push-batches.server.ts`). This replaced the old filesystem
+snapshots in `./backups/`: a database row survives across machines and
+deploys, is naturally scoped per shop, and lets the app list every past
+push instead of only ever being able to restore "the latest one."
+
+The dashboard's History page (`app/app/routes/app.history.tsx`) lists a
+shop's batches newest-first with an Undo button on each. Undo asks for
+confirmation in a modal, then calls the same `undoBatch()` used by the old
+CLI `undo` command — including the same null-cost handling (a variant with
+no cost recorded before the push gets its cost *cleared* back to "not
+recorded" on undo, not set to a stray value like 0). A batch is marked
+`reverted` once undone so its Undo button can't be used a second time,
+which would silently re-apply stale "before" values on top of whatever's
+changed since.
+
 ### GDPR webhooks
 
 `customers/data_request`, `customers/redact`, and `shop/redact` are wired up
 (`app/app/routes/webhooks.*.tsx`) and declared in `shopify.app.toml`. The
 first two are no-ops — this app never stores customer PII. `shop/redact`
 (and the existing `app/uninstalled` handler) delete that shop's session(s),
-its cached diagnostic (`app/app/diagnostic-cache.server.ts`), and its Google
-connection (`app/app/google-account.server.ts`) — refresh token and
-spreadsheetId link both gone, not just invalidated.
+its cached diagnostic (`app/app/diagnostic-cache.server.ts`), its Google
+connection (`app/app/google-account.server.ts` — refresh token and
+spreadsheetId link both gone, not just invalidated), and its push history
+(`app/app/push-batches.server.ts`).
 
 To work on it:
 
 ```bash
 cd app
 npm install   # already done once during scaffolding, but harmless to rerun
-npx prisma migrate dev   # applies the Session/DiagnosticCache/GoogleAccount migrations
+npx prisma migrate dev   # applies the Session/DiagnosticCache/GoogleAccount/PushBatch migrations
 npm run dev   # runs `shopify app dev` — requires you to be logged into
               # your Shopify Partner account; it will prompt to log in
               # and to link this project to an app in your organization

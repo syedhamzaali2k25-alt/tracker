@@ -25,3 +25,14 @@ export interface DiagnosticSummary {
   noCostCount: number;
   currencyCode: string;
 }
+
+/** A single variant's pre-change price/cost, snapshotted before applyChanges() writes to Shopify. */
+export interface BackupEntry {
+  productId: string;
+  variantId: string;
+  inventoryItemId: string;
+  productTitle: string;
+  variantTitle: string;
+  price: number;
+  cost: number | null;
+}

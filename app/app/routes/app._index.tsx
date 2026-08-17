@@ -30,6 +30,7 @@ import {
   invalidateGoogleConnection,
   saveSpreadsheetId,
 } from "../google-account.server";
+import { saveBatch } from "../push-batches.server";
 
 function spreadsheetUrlFor(spreadsheetId: string): string {
   return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
@@ -209,7 +210,7 @@ export const action = async ({
       const shopContext = toShopContext(session);
       console.log(`[action] intent=apply session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
       const entries = JSON.parse(String(formData.get("entries"))) as FixEntry[];
-      const result = await applyChanges(shopContext, entries);
+      const result = await applyChanges(shopContext, entries, saveBatch);
       return { result } satisfies ApplyResult;
     }
 

@@ -56,3 +56,22 @@ model GoogleAccount {
   spreadsheetId String?
   updatedAt     DateTime @updatedAt
 }
+
+// One row per applyChanges() run: the before-values for every variant it
+// touched, so History can undo a specific push later. Replaces the old
+// filesystem snapshots in ./backups/ — a database row survives across
+// machines/deploys the way a local JSON file never could, and lets the
+// dashboard list past pushes instead of only ever restoring "the latest".
+model PushBatch {
+  id          String    @id @default(cuid())
+  shop        String
+  createdAt   DateTime  @default(now())
+  changeCount Int
+  // JSON-serialized BackupEntry[] — the price/cost each touched variant had
+  // right before this push.
+  entries     String
+  reverted    Boolean   @default(false)
+  revertedAt  DateTime?
+
+  @@index([shop, createdAt])
+}
