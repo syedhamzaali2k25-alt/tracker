@@ -17,9 +17,9 @@ import { applyChanges, type ApplyChangesResult } from "~lib/pipeline/applyChange
 import { createSpreadsheet, type GoogleContext } from "~lib/sheets/client.js";
 import { writeDiagnostic } from "~lib/sheets/diagnosticSheet.js";
 import type { FixEntry } from "~lib/sheets/fixSheet.js";
-import type { ShopContext } from "~lib/shopify/client.js";
 import type { DiagnosticSummary, MarginRow } from "~lib/types.js";
 import { getCachedDiagnostic, setCachedDiagnostic } from "../diagnostic-cache.server";
+import { toShopContext } from "../shop-context.server";
 import {
   getGoogleConnectUrl,
   googleAuthClientFromRefreshToken,
@@ -34,14 +34,6 @@ import { saveBatch } from "../push-batches.server";
 
 function spreadsheetUrlFor(spreadsheetId: string): string {
   return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
-}
-
-/** authenticate.admin() always returns an active session with a token; the check is defensive. */
-function toShopContext(session: { shop: string; accessToken?: string }): ShopContext {
-  if (!session.accessToken) {
-    throw new Error("No access token on the current session — try reinstalling the app.");
-  }
-  return { shop: session.shop, accessToken: session.accessToken };
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

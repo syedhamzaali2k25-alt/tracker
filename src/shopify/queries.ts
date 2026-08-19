@@ -61,6 +61,14 @@ const PRODUCT_VARIANTS_PAGE_QUERY = /* GraphQL */ `
   }
 `;
 
+const SHOP_EMAIL_QUERY = /* GraphQL */ `
+  query ShopEmail {
+    shop {
+      email
+    }
+  }
+`;
+
 const RECENT_ORDERS_QUERY = /* GraphQL */ `
   query RecentOrders($cursor: String, $since: String!) {
     orders(first: 100, after: $cursor, query: $since) {
@@ -134,6 +142,16 @@ function toVariantRow(productId: string, productTitle: string, raw: RawVariant):
     price: Number(raw.price),
     currencyCode: raw.inventoryItem.unitCost?.currencyCode ?? "",
   };
+}
+
+interface ShopEmailResponse {
+  shop: { email: string | null };
+}
+
+/** The shop's Shopify account email — used as the default weekly-alert recipient (see app/app/routes/app.settings.tsx). */
+export async function fetchShopEmail(shopContext: ShopContext): Promise<string | null> {
+  const data = await shopifyGraphQL<ShopEmailResponse>(shopContext, SHOP_EMAIL_QUERY);
+  return data.shop.email;
 }
 
 export async function fetchAllVariants(shopContext: ShopContext): Promise<VariantRow[]> {

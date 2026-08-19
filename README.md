@@ -72,6 +72,8 @@ src/
   pipeline/
     runDiagnostic.ts, previewChanges.ts, applyChanges.ts, undo.ts
                                     exported functions, reused by the app
+    weeklyDiff.ts                  pure week-over-week margin diff
+    weeklyAlertEmail.ts            builds the alert email's subject/text/html
     devShopContext.ts              CLI-only ShopContext fallback
     cli/                           `npm run diagnostic/preview/apply/undo`
                                     entry points (see below)
@@ -107,12 +109,6 @@ server boot, using whatever `SHOPIFY_SHOP`/`SHOPIFY_ACCESS_TOKEN` happened to
 be set. Keeping the CLI entry points in files the app never imports makes
 that impossible by construction, not just by careful coding.
 
-## Not built yet
-
-- Weekly automated re-check + email alert (the "watchman" subscription
-  feature) — deployment is ready for it (see "Deploying" below), but the
-  job itself doesn't exist yet.
-
 ## The `app/` directory
 
 `app/` is a separate npm project: Shopify's official React Router app
@@ -143,6 +139,8 @@ instead).
 | `SESSION_ENCRYPTION_KEY` | Yes | 64 hex chars (32 bytes). Encrypts Shopify session tokens and Google refresh tokens at rest. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Losing/rotating this invalidates every stored session and Google connection — merchants would need to reinstall/reconnect. |
 | `GOOGLE_OAUTH_CLIENT_ID` | Yes | Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web application). |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Yes | The matching secret from that same OAuth client. |
+| `SENDGRID_API_KEY` | Cron service only | SendGrid → Settings → API Keys → Create API Key, "Restricted Access" with only "Mail Send" permission. Only the weekly-check cron service sends email; the web service never needs this. |
+| `EMAIL_FROM` | Cron service only | The single sender address you verified in SendGrid (Settings → Sender Authentication → Single Sender Verification — no domain needed, see "Weekly margin alerts" below). Must match exactly what you verified. |
 | `SHOP_CUSTOM_DOMAIN` | No | Only if you support a merchant's custom domain on the storefront side; see the Shopify template's own docs. Unset by default. |
 | `PORT` | No | `@react-router/serve` listens on this; your host sets it automatically (Railway/Render/Fly all do). Defaults to 3000 if unset. |
 | `NODE_ENV` | No | Already set to `production` in the Dockerfile; most hosts also set this themselves. |
@@ -223,6 +221,65 @@ recorded" on undo, not set to a stray value like 0). A batch is marked
 which would silently re-apply stale "before" values on top of whatever's
 changed since.
 
+### Weekly margin alerts
+
+A separate script (`app/app/cron/weeklyCheck.server.ts`, run via
+`npm run cron:weekly-check`) re-runs the diagnostic for every currently
+installed shop, compares it to that shop's own previous run
+(`app/app/watchman-run.server.ts` — a `WatchmanRun` row per shop, kept
+separate from the dashboard's `DiagnosticCache` so an ad-hoc "Sync" click
+doesn't skew the week-over-week baseline), and emails the merchant only
+when something **newly** crossed into below-cost or under the margin
+threshold — not a full re-report every week. The diffing itself
+(`src/pipeline/weeklyDiff.ts`) is a pure function: given last week's rows
+and this week's, keyed by variant ID, it returns exactly the variants whose
+flag just became `below-cost` or `low-margin` (a variant already in either
+state stays quiet; a brand new variant that debuts already bad still gets
+reported).
+
+It's a plain script, not an HTTP route, run as its own Railway Cron Job
+service on a weekly schedule — see "Deploying" below for the exact setup.
+Shops are processed one at a time in a `for` loop with a `try`/`catch`
+around each: one shop's Shopify API error, missing Google connection, or
+SendGrid failure is logged and skipped, never aborting the shops after it.
+Rate limiting isn't reimplemented here — `runDiagnostic()` calls the same
+`shopifyGraphQL()` wrapper the rest of the app uses, which already tracks
+each shop's own cost-based throttle bucket and backs off automatically
+(Phase 0.4); running shops sequentially rather than concurrently means
+there's never more than one shop's worth of Shopify traffic in flight at
+once.
+
+**Two decisions made here, not left as defaults to stumble into:**
+
+- **Email provider: SendGrid**, using its plain REST API directly
+  (`app/app/email.server.ts`) rather than the `@sendgrid/mail` SDK — a
+  single JSON POST didn't need a dependency for it. SendGrid's free tier
+  (100 emails/day, no expiry) needs only **Single Sender Verification** —
+  confirm ownership of one specific "from" address by clicking a link
+  SendGrid emails to it — not a verified domain, matching the constraint.
+  Other providers considered: Resend and Mailgun's no-domain sandbox modes
+  only deliver to the account owner's own address, not arbitrary merchant
+  inboxes, which doesn't work for this; Postmark supports the same
+  single-sender approach but its free tier is a one-time 100-email trial
+  rather than an ongoing daily allowance.
+- **Where the merchant's email comes from: the shop's Shopify account
+  email by default, with an optional override.** A Settings page
+  (`app/app/routes/app.settings.tsx`) was already needed for the emails-off
+  toggle, so adding one more optional field there to redirect alerts
+  somewhere else (an ops inbox, distribution list) is barely more work and
+  clearly better than assuming the Shopify signup address is where a
+  merchant wants automated alerts to land. `getShopSettings()`'s
+  `alertEmail` is `null` unless they've set one, and the job falls back to
+  `shop.email` (`fetchShopEmail()`, a plain `shop { email }` GraphQL query
+  — no extra scope needed) in that case.
+
+The Settings page's checkbox controls `ShopSettings.emailAlerts`
+(`app/app/shop-settings.server.ts`), checked by default. Turning it off
+still lets the weekly job run and update the `WatchmanRun` baseline —
+only the email send is skipped — so re-enabling it later compares against
+an up-to-date baseline instead of dumping everything that changed while it
+was off.
+
 ### GDPR webhooks
 
 `customers/data_request`, `customers/redact`, and `shop/redact` are wired up
@@ -231,8 +288,12 @@ first two are no-ops — this app never stores customer PII. `shop/redact`
 (and the existing `app/uninstalled` handler) delete that shop's session(s),
 its cached diagnostic (`app/app/diagnostic-cache.server.ts`), its Google
 connection (`app/app/google-account.server.ts` — refresh token and
-spreadsheetId link both gone, not just invalidated), and its push history
-(`app/app/push-batches.server.ts`).
+spreadsheetId link both gone, not just invalidated), its push history
+(`app/app/push-batches.server.ts`), its email settings
+(`app/app/shop-settings.server.ts`), and its weekly-check baseline
+(`app/app/watchman-run.server.ts`). An uninstalled shop also has no
+`Session` row left, which is what keeps it out of the weekly job's shop
+list in the first place (see "Weekly margin alerts" above).
 
 To work on it:
 
@@ -313,9 +374,24 @@ scheduled-job piece easiest.
    deploy going live unable to serve a single real request. Railway polls
    this automatically once `railway.json`'s `healthcheckPath` is picked up.
 
-**When Phase 5 gets built**, its cron job becomes a second Railway service
-in the same project: same repo, same Dockerfile, a `startCommand` override
-(something like `npm run --prefix app watchman:run` once that script
-exists) instead of `npm run docker-start`, and a cron expression on a
-weekly cadence. It reads the same `DATABASE_URL`/Shopify session storage
-the web service does — no extra plumbing beyond the schedule itself.
+**Steps (weekly margin alerts, Railway Cron Job):**
+
+1. In the same Railway project, add a service from the same GitHub repo —
+   same **Root Directory** (repo root, not `app/`) and **Dockerfile Path**
+   (`app/Dockerfile`) as the web service, same reasoning as step 2 above.
+2. Set its **Service Type** to **Cron Job** (Railway's dashboard offers this
+   per-service) with a weekly schedule, e.g. `0 9 * * 1` for Monday 9am UTC.
+3. Override its **Start Command** to `npm run cron:weekly-check` instead of
+   the image's default `npm run docker-start` CMD — Railway lets you set a
+   custom start command per service without changing the Dockerfile. This
+   runs `prisma migrate deploy` again (safe — Prisma's migration lock
+   handles two services applying migrations concurrently without
+   conflict) before the check, then exits; Railway's Cron Job billing only
+   charges for the seconds it actually runs.
+4. Give this service the same `DATABASE_URL` as the web service (reference
+   the same Postgres service — don't duplicate the database), plus
+   `SHOPIFY_API_KEY`/`SHOPIFY_API_SECRET`/`SESSION_ENCRYPTION_KEY` (needed
+   to decrypt session access tokens) and `SENDGRID_API_KEY`/`EMAIL_FROM`
+   (not needed by the web service, only this one).
+5. Trigger it once manually from Railway's dashboard after setup to confirm
+   it runs cleanly before waiting a week to find out.

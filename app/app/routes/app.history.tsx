@@ -9,21 +9,13 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { undoBatch } from "~lib/pipeline/undo.js";
-import type { ShopContext } from "~lib/shopify/client.js";
 import {
   getBatch,
   listBatches,
   markBatchReverted,
   type PushBatchSummary,
 } from "../push-batches.server";
-
-/** authenticate.admin() always returns an active session with a token; the check is defensive. */
-function toShopContext(session: { shop: string; accessToken?: string }): ShopContext {
-  if (!session.accessToken) {
-    throw new Error("No access token on the current session — try reinstalling the app.");
-  }
-  return { shop: session.shop, accessToken: session.accessToken };
-}
+import { toShopContext } from "../shop-context.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);

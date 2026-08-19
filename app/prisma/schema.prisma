@@ -75,3 +75,25 @@ model PushBatch {
 
   @@index([shop, createdAt])
 }
+
+// Per-shop weekly-email preferences. alertEmail is an optional override —
+// null means "use the shop's own Shopify account email" (see
+// app/app/routes/app.settings.tsx and app/cron/weeklyCheck.server.ts).
+model ShopSettings {
+  shop        String   @id
+  emailAlerts Boolean  @default(true)
+  alertEmail  String?
+  updatedAt   DateTime @updatedAt
+}
+
+// The weekly watchman job's own last-run snapshot per shop, kept separate
+// from DiagnosticCache (which reflects the merchant's own ad-hoc "Sync"
+// clicks in the dashboard) so the week-over-week diff has a stable,
+// job-owned baseline instead of being skewed by whatever the merchant
+// happened to sync most recently.
+model WatchmanRun {
+  shop  String   @id
+  // JSON-serialized { rows: MarginRow[], summary: DiagnosticSummary }
+  data  String
+  ranAt DateTime @updatedAt
+}
