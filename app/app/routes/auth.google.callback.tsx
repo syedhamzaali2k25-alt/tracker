@@ -18,10 +18,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const oauthError = url.searchParams.get("error");
 
   if (oauthError) {
+    console.error(`[auth/google/callback] Google redirected back with error=${oauthError}`);
     return redirect(`/app?googleError=${encodeURIComponent(oauthError)}`);
   }
 
+  if (!code) {
+    console.error("[auth/google/callback] missing `code` query param");
+  }
+  if (!state) {
+    console.error("[auth/google/callback] missing `state` query param");
+  }
+
+  // shopFromGoogleState (verifyState) logs the specific reason — decode
+  // failure, wrong shape, HMAC mismatch, or expiry — itself when it returns
+  // null; nothing to add here beyond flagging that it did.
   const shop = state ? shopFromGoogleState(state) : null;
+  if (state && !shop) {
+    console.error("[auth/google/callback] state present but did not verify — see the verifyState log above for why");
+  }
   if (!shop || !code) {
     return redirect("/app?googleError=invalid_request");
   }
@@ -30,7 +44,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { refreshToken } = await completeGoogleConnect(code);
     await saveGoogleRefreshToken(shop, refreshToken);
   } catch (error) {
-    console.error("Google OAuth callback failed", error);
+    const gaxiosResponse =
+      error && typeof error === "object" && "response" in error
+        ? (error as { response?: { data?: unknown; status?: number } }).response
+        : undefined;
+    console.error(`[auth/google/callback] token exchange failed for shop=${shop}:`, error);
+    if (gaxiosResponse) {
+      console.error(
+        `[auth/google/callback] Google's response: status=${gaxiosResponse.status} data=${JSON.stringify(gaxiosResponse.data)}`,
+      );
+    }
     return redirect(`/app?shop=${encodeURIComponent(shop)}&googleError=exchange_failed`);
   }
 

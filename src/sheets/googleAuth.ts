@@ -94,21 +94,41 @@ export function verifyState(secret: string, state: string): string | null {
   let decoded: string;
   try {
     decoded = Buffer.from(state, "base64url").toString("utf8");
-  } catch {
+  } catch (error) {
+    console.error("[verifyState] failed to base64url-decode state:", error);
     return null;
   }
 
   const parts = decoded.split(":");
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3) {
+    console.error(
+      `[verifyState] decoded state has ${parts.length} ":"-separated part(s), expected 3 (shop:timestamp:signature): ${JSON.stringify(decoded)}`,
+    );
+    return null;
+  }
   const [shop, timestamp, signature] = parts;
 
   const expected = crypto.createHmac("sha256", secret).update(`${shop}:${timestamp}`).digest("hex");
   const signatureBuffer = Buffer.from(signature, "hex");
   const expectedBuffer = Buffer.from(expected, "hex");
-  if (signatureBuffer.length !== expectedBuffer.length) return null;
-  if (!crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) return null;
+  if (signatureBuffer.length !== expectedBuffer.length) {
+    console.error(
+      `[verifyState] signature length mismatch for shop=${shop}: got ${signatureBuffer.length} bytes, expected ${expectedBuffer.length}`,
+    );
+    return null;
+  }
+  if (!crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    console.error(
+      `[verifyState] HMAC signature mismatch for shop=${shop} — state wasn't signed with the current secret (SESSION_ENCRYPTION_KEY changed since it was issued?) or was tampered with`,
+    );
+    return null;
+  }
 
-  if (Date.now() - Number(timestamp) > STATE_TTL_MS) return null;
+  const ageMs = Date.now() - Number(timestamp);
+  if (ageMs > STATE_TTL_MS) {
+    console.error(`[verifyState] state expired for shop=${shop}: ${ageMs}ms old, limit is ${STATE_TTL_MS}ms`);
+    return null;
+  }
 
   return shop;
 }

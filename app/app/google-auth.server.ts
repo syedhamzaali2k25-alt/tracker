@@ -22,10 +22,16 @@ function requiredEnv(name: string): string {
 
 function oauthConfig(): GoogleOAuthConfig {
   const appUrl = requiredEnv("SHOPIFY_APP_URL").replace(/\/$/, "");
+  const redirectUri = `${appUrl}/auth/google/callback`;
+  // Compare this byte-for-byte against the redirect URI registered on the
+  // Google Cloud OAuth client — any mismatch (trailing slash, http vs
+  // https, wrong domain) makes Google reject the exchange with
+  // redirect_uri_mismatch.
+  console.log(`[google-auth] redirect_uri=${redirectUri} (from SHOPIFY_APP_URL=${appUrl})`);
   return {
     clientId: requiredEnv("GOOGLE_OAUTH_CLIENT_ID"),
     clientSecret: requiredEnv("GOOGLE_OAUTH_CLIENT_SECRET"),
-    redirectUri: `${appUrl}/auth/google/callback`,
+    redirectUri,
   };
 }
 
