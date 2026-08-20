@@ -1,9 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { sheets_v4 } from "googleapis";
-import { diagnosticFormattingRequests, fixFormattingRequests } from "./sheetFormatting.js";
+import {
+  diagnosticFormattingRequests,
+  EXACT_LOCATION,
+  fixFormattingRequests,
+  setFormatVersionRequest,
+} from "./sheetFormatting.js";
 
 const SHEET_ID = 4242;
+
+// Google's own accepted values for DeveloperMetadataLocationMatchingStrategy
+// (https://developers.google.com/workspace/sheets/api/reference/rest/v4/DataFilter) —
+// NOT the bare "EXACT"/"INTERSECTING" the field's prose description reads
+// as. Sending anything outside this set is exactly the bug that took down
+// writeDiagnostic() entirely: request-shape assertions alone (matching
+// field names/types) don't catch a wrong-but-plausible-looking string
+// value, since TypeScript types this field as a bare `string`.
+const VALID_LOCATION_MATCHING_STRATEGIES = [
+  "DEVELOPER_METADATA_LOCATION_MATCHING_STRATEGY_UNSPECIFIED",
+  "EXACT_LOCATION",
+  "INTERSECTING_LOCATION",
+];
 
 function repeatCellRequests(requests: sheets_v4.Schema$Request[]) {
   return requests.map((r) => r.repeatCell).filter((r): r is NonNullable<typeof r> => r !== undefined);
@@ -133,4 +151,32 @@ test("fix: below-cost conditional format targets only New Price and compares it 
   assert.match(formula, /\$F2/); // New Price, row 2 (1-indexed, first data row)
   assert.match(formula, /\$E2/); // Current Cost
   assert.match(formula, /\$F2<\$E2/);
+});
+
+test("EXACT_LOCATION is a value the Sheets API actually accepts for locationMatchingStrategy", () => {
+  assert.ok(
+    VALID_LOCATION_MATCHING_STRATEGIES.includes(EXACT_LOCATION),
+    `"${EXACT_LOCATION}" is not one of the API's accepted DeveloperMetadataLocationMatchingStrategy values: ${VALID_LOCATION_MATCHING_STRATEGIES.join(", ")}`,
+  );
+});
+
+test("EXACT_LOCATION is not the bare 'EXACT' that previously broke every developerMetadata call", () => {
+  // Regression guard for the exact string Google's error named as invalid.
+  assert.notEqual(EXACT_LOCATION, "EXACT");
+});
+
+test("setFormatVersionRequest's update path (previously-applied version exists) sends a valid locationMatchingStrategy", () => {
+  const request = setFormatVersionRequest(SHEET_ID, "v2", "v1");
+  const strategy = request.updateDeveloperMetadata?.dataFilters?.[0].developerMetadataLookup?.locationMatchingStrategy;
+  assert.ok(strategy, "expected a locationMatchingStrategy on the update path's data filter");
+  assert.ok(
+    VALID_LOCATION_MATCHING_STRATEGIES.includes(strategy!),
+    `"${strategy}" is not one of the API's accepted DeveloperMetadataLocationMatchingStrategy values`,
+  );
+});
+
+test("setFormatVersionRequest's create path (no previous version) needs no locationMatchingStrategy at all", () => {
+  const request = setFormatVersionRequest(SHEET_ID, "v1", null);
+  assert.ok(request.createDeveloperMetadata, "expected a createDeveloperMetadata request when nothing was applied yet");
+  assert.equal(request.updateDeveloperMetadata, undefined);
 });

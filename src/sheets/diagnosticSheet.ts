@@ -98,6 +98,21 @@ export function buildFixRows(
   return { values, preservedCount };
 }
 
+/**
+ * Formatting is cosmetic — a merchant's diagnostic data must still get
+ * written even if a formatting request fails (wrong enum value, a
+ * transient API error, whatever). Logs and swallows rather than letting a
+ * formatting bug take down writeDiagnostic() entirely, which is exactly
+ * what an unguarded call here already did once.
+ */
+async function applyFormattingSafely(label: string, apply: () => Promise<void>): Promise<void> {
+  try {
+    await apply();
+  } catch (error) {
+    console.error(`Warning: ${label} formatting failed — continuing without it.`, error);
+  }
+}
+
 export async function writeDiagnostic(
   ctx: GoogleContext,
   rows: MarginRow[],
@@ -108,9 +123,12 @@ export async function writeDiagnostic(
 
   // No-ops after the first run (or after a deliberate format-version bump)
   // — see sheetFormatting.ts's ensureFormatted for how that's tracked
-  // without re-sending the formatting requests on every sync.
-  await ensureDiagnosticFormatting(ctx, diagnosticSheetId, summary.currencyCode);
-  await ensureFixFormatting(ctx, fixSheetId);
+  // without re-sending the formatting requests on every sync. Wrapped so a
+  // formatting failure can never block the data write below.
+  await applyFormattingSafely("Diagnostic tab", () =>
+    ensureDiagnosticFormatting(ctx, diagnosticSheetId, summary.currencyCode),
+  );
+  await applyFormattingSafely("Fix tab", () => ensureFixFormatting(ctx, fixSheetId));
 
   const pendingEdits = buildPendingEditsMap(await readFixEntries(ctx));
 

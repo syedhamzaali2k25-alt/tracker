@@ -10,6 +10,15 @@ const LIGHT_RED = { red: 0.957, green: 0.8, blue: 0.8 };
 const LIGHT_YELLOW = { red: 1, green: 0.949, blue: 0.8 };
 
 const METADATA_KEY = "marginTrackerFormatVersion";
+// DeveloperMetadataLocationMatchingStrategy's real accepted values are
+// EXACT_LOCATION / INTERSECTING_LOCATION (not the bare "EXACT"/
+// "INTERSECTING" the field's prose description might suggest) — a plain
+// "EXACT" here previously made every developerMetadata call fail with
+// "Invalid value ... location_matching_strategy", which took down
+// writeDiagnostic() entirely since that failure wasn't isolated from the
+// actual data write. Single constant so this can't drift out of sync
+// between the two call sites again.
+export const EXACT_LOCATION = "EXACT_LOCATION";
 
 /**
  * Bump either of these when the requests that version's builder returns
@@ -40,7 +49,7 @@ async function getAppliedFormatVersion(
           developerMetadataLookup: {
             metadataKey: METADATA_KEY,
             metadataLocation: { sheetId },
-            locationMatchingStrategy: "EXACT",
+            locationMatchingStrategy: EXACT_LOCATION,
           },
         },
       ],
@@ -50,7 +59,8 @@ async function getAppliedFormatVersion(
   return match?.metadataValue ?? null;
 }
 
-function setFormatVersionRequest(
+/** Exported for testing — see sheetFormatting.test.ts. Not meant to be called directly by anything else. */
+export function setFormatVersionRequest(
   sheetId: number,
   version: string,
   previouslyApplied: string | null,
@@ -74,7 +84,7 @@ function setFormatVersionRequest(
           developerMetadataLookup: {
             metadataKey: METADATA_KEY,
             metadataLocation: { sheetId },
-            locationMatchingStrategy: "EXACT",
+            locationMatchingStrategy: EXACT_LOCATION,
           },
         },
       ],
