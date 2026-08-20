@@ -1,6 +1,7 @@
 import type { DiagnosticSummary, MarginRow } from "../types.js";
 import { clearRange, ensureTab, writeRange, type GoogleContext } from "./client.js";
 import { buildPendingEditsMap, readFixEntries, type PendingEdit } from "./fixSheet.js";
+import { ensureDiagnosticFormatting, ensureFixFormatting } from "./sheetFormatting.js";
 
 export const DIAGNOSTIC_TAB = "Diagnostic";
 export const FIX_TAB = "Fix";
@@ -102,8 +103,14 @@ export async function writeDiagnostic(
   rows: MarginRow[],
   summary: DiagnosticSummary,
 ): Promise<{ preservedCount: number }> {
-  await ensureTab(ctx, DIAGNOSTIC_TAB);
-  await ensureTab(ctx, FIX_TAB);
+  const { sheetId: diagnosticSheetId } = await ensureTab(ctx, DIAGNOSTIC_TAB);
+  const { sheetId: fixSheetId } = await ensureTab(ctx, FIX_TAB);
+
+  // No-ops after the first run (or after a deliberate format-version bump)
+  // — see sheetFormatting.ts's ensureFormatted for how that's tracked
+  // without re-sending the formatting requests on every sync.
+  await ensureDiagnosticFormatting(ctx, diagnosticSheetId, summary.currencyCode);
+  await ensureFixFormatting(ctx, fixSheetId);
 
   const pendingEdits = buildPendingEditsMap(await readFixEntries(ctx));
 

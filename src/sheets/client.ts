@@ -12,7 +12,7 @@ export interface GoogleContext {
   spreadsheetId: string;
 }
 
-function getSheetsClient(auth: GoogleAuthClient): sheets_v4.Sheets {
+export function getSheetsClient(auth: GoogleAuthClient): sheets_v4.Sheets {
   return google.sheets({ version: "v4", auth });
 }
 
@@ -29,19 +29,35 @@ export async function createSpreadsheet(auth: GoogleAuthClient, title: string): 
   return spreadsheetId;
 }
 
-export async function ensureTab(ctx: GoogleContext, title: string): Promise<void> {
+/**
+ * Creates the tab if it doesn't exist yet, and always returns its numeric
+ * sheetId — every formatting request (sheetFormatting.ts) needs that, not
+ * the title, to address ranges.
+ */
+export async function ensureTab(ctx: GoogleContext, title: string): Promise<{ sheetId: number }> {
   const sheets = getSheetsClient(ctx.auth);
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: ctx.spreadsheetId });
-  const exists = spreadsheet.data.sheets?.some((s) => s.properties?.title === title);
+  const existing = spreadsheet.data.sheets?.find((s) => s.properties?.title === title);
 
-  if (!exists) {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: ctx.spreadsheetId,
-      requestBody: {
-        requests: [{ addSheet: { properties: { title } } }],
-      },
-    });
+  if (existing) {
+    const sheetId = existing.properties?.sheetId;
+    if (sheetId === undefined || sheetId === null) {
+      throw new Error(`Google returned no sheetId for the existing "${title}" tab.`);
+    }
+    return { sheetId };
   }
+
+  const response = await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: ctx.spreadsheetId,
+    requestBody: {
+      requests: [{ addSheet: { properties: { title } } }],
+    },
+  });
+  const sheetId = response.data.replies?.[0]?.addSheet?.properties?.sheetId;
+  if (sheetId === undefined || sheetId === null) {
+    throw new Error(`Google did not return a sheetId for the newly created "${title}" tab.`);
+  }
+  return { sheetId };
 }
 
 export async function writeRange(

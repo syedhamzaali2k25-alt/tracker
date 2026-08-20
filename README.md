@@ -68,6 +68,7 @@ src/
     googleAuth.ts               OAuth client, auth URL, token exchange,
                                   state signing (shared with the app)
     diagnosticSheet.ts         Diagnostic + Fix tab layout and writing
+    sheetFormatting.ts          formatting requests for both tabs (see below)
     fixSheet.ts                 reads merchant-entered New Price/New Cost
   pipeline/
     runDiagnostic.ts, previewChanges.ts, applyChanges.ts, undo.ts
@@ -97,6 +98,21 @@ than importing a way to persist a snapshot itself — it's a plain
 `(shop, entries) => Promise<batchId>` function, backed by a database table
 in the app (`app/app/push-batches.server.ts`) instead of anything in `src/`,
 since this shared pipeline code has no database of its own to reach for.
+
+Both tabs are formatted (bold/frozen header, currency/percent number
+formats, column widths, protected + validated + conditionally-formatted
+Fix columns) via `sheetFormatting.ts`, but only the first time a tab exists
+or after a deliberate code change bumps its format version — not on every
+plain diagnostic sync, which would resend the whole formatting batch for no
+visible change every single time. That's tracked with spreadsheet-invisible
+[developer
+metadata](https://developers.google.com/workspace/sheets/api/guides/metadata)
+(a version string stashed on the sheet itself, outside any cell a merchant
+could see or accidentally overwrite) rather than anything in this app's own
+database, so it stays correct even for a spreadsheet nothing else here has
+state about. Below-cost highlighting on both tabs is a conditional format
+rule, not per-row cell coloring — it re-evaluates from the cell values
+themselves on every future sync, so it never needs reapplying either.
 
 The four `npm run diagnostic/preview/apply/undo` entry points live in
 `pipeline/cli/`, separate from the functions they call, rather than each

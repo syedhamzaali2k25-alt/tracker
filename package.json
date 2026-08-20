@@ -10,7 +10,7 @@
     "apply": "tsx src/pipeline/cli/apply.ts",
     "undo": "tsx src/pipeline/cli/undo.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/margin/calculate.test.ts src/pipeline/previewChanges.test.ts src/pipeline/weeklyDiff.test.ts src/pipeline/weeklyAlertEmail.test.ts src/sheets/diagnosticSheet.test.ts src/shopify/mutations.test.ts src/sheets/fixSheet.test.ts src/shopify/client.test.ts"
+    "test": "node --import tsx --test src/margin/calculate.test.ts src/pipeline/previewChanges.test.ts src/pipeline/weeklyDiff.test.ts src/pipeline/weeklyAlertEmail.test.ts src/sheets/diagnosticSheet.test.ts src/sheets/sheetFormatting.test.ts src/shopify/mutations.test.ts src/sheets/fixSheet.test.ts src/shopify/client.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
