@@ -323,6 +323,25 @@ npm run dev   # runs `shopify app dev` — requires you to be logged into
               # and to link this project to an app in your organization
 ```
 
+### Public pages
+
+`/` (`app/app/routes/_index/`) is the app's real landing page — headline,
+what it does, the shop-domain login form, three feature points — not the
+Shopify template's lorem-ipsum placeholder. `/privacy`
+(`app/app/routes/privacy/`) is a real privacy policy covering what's
+accessed, how tokens are stored, and what's deleted on uninstall. Both are
+public: no `authenticate.admin()`, reachable without an installed session,
+which is what App Store review and Google's OAuth verification reviewer
+both expect to find. Set `/privacy`'s full URL as the Privacy Policy URL in
+the Partner Dashboard's app listing before submitting for review.
+
+Both are colocated as `<route>/route.tsx` + `<route>/styles.module.css`
+folders rather than flat files — `@react-router/fs-routes` tries to parse
+*any* file sitting directly in `app/routes/` as its own route, CSS modules
+included, so a flat `privacy.module.css` next to `privacy.tsx` fails the
+build outright. The folder form is the one place a co-located non-route
+file is safe (mirrors how `_index/` already needed to work).
+
 ### Deploying
 
 **Railway** is the pick here, over Render or Fly. All three can run a
