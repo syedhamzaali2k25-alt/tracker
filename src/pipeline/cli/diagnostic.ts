@@ -19,7 +19,7 @@ async function main() {
   const shopContext = getDevShopContext();
   await runDiagnostic(shopContext, report);
   report(
-    "Done. This CLI no longer writes to a Google Sheet — Sheets access is per-merchant OAuth " +
+    "Done. This CLI no longer writes to a Google Sheet: Sheets access is per-merchant OAuth " +
       "now, connected through the app. Run the app locally (`cd app && npm run dev`) and use " +
       "\"Sync\" + \"Create sheet\" instead.",
   );

@@ -329,7 +329,7 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
             startColumnIndex: FIX_COLUMNS.productId,
             endColumnIndex: FIX_COLUMNS.inventoryItemId + 1,
           },
-          description: "Shopify IDs — used to match this row back to the right variant. Edit with care.",
+          description: "Shopify IDs, used to match this row back to the right variant. Edit with care.",
           warningOnly: true,
         },
       },

@@ -13,8 +13,8 @@ function formatMoney(amount: number, currencyCode: string): string {
 function describeRow(change: MarginChange, fallbackCurrencyCode: string): string {
   const { row } = change;
   const currencyCode = row.currencyCode || fallbackCurrencyCode;
-  const margin = row.marginPct === null ? "—" : `${(row.marginPct * 100).toFixed(1)}%`;
-  const cost = row.cost === null ? "—" : formatMoney(row.cost, currencyCode);
+  const margin = row.marginPct === null ? "N/A" : `${(row.marginPct * 100).toFixed(1)}%`;
+  const cost = row.cost === null ? "N/A" : formatMoney(row.cost, currencyCode);
   const name = [row.productTitle, row.variantTitle].filter(Boolean).join(" ");
   const sku = row.sku ? ` (SKU ${row.sku})` : "";
   return `${name}${sku}: price ${formatMoney(row.price, currencyCode)}, cost ${cost}, margin ${margin}`;

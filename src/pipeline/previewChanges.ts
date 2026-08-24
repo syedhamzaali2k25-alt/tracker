@@ -63,7 +63,7 @@ export function printPreview(preview: ChangePreview): void {
     }
   }
   if (preview.count === 0) {
-    console.log("No New Price / New Cost values found in the Fix tab — nothing to change.");
+    console.log("No New Price / New Cost values found in the Fix tab. Nothing to change.");
   }
 }
 

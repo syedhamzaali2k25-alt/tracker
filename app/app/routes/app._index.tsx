@@ -102,7 +102,7 @@ async function googleContextForShop(shop: string): Promise<GoogleContext | null>
   const auth = googleAuthClientFromRefreshToken(connection.refreshToken);
   let spreadsheetId = connection.spreadsheetId;
   if (!spreadsheetId) {
-    spreadsheetId = await createSpreadsheet(auth, `Margin Tracker — ${shop}`);
+    spreadsheetId = await createSpreadsheet(auth, `Margin Tracker: ${shop}`);
     await saveSpreadsheetId(shop, spreadsheetId);
   }
 
@@ -128,7 +128,7 @@ async function requireExistingGoogleContext(
       ok: false,
       response: {
         error:
-          'No sheet yet — click "Create sheet" first, add New Price / New Cost values in the ' +
+          'No sheet yet. Click "Create sheet" first, add New Price / New Cost values in the ' +
           "Fix tab, then push changes.",
       },
     };
@@ -219,7 +219,7 @@ function formatMoney(amount: number, currencyCode: string): string {
 }
 
 function formatPercent(value: number | null): string {
-  return value === null ? "—" : `${(value * 100).toFixed(1)}%`;
+  return value === null ? "N/A" : `${(value * 100).toFixed(1)}%`;
 }
 
 function pluralize(count: number, noun: string): string {
@@ -315,7 +315,7 @@ export default function Dashboard() {
       shopify.toast.show("Google connected.");
     } else if (loaderData.googleError) {
       shopify.toast.show(
-        "Couldn't connect Google — please try again.",
+        "Couldn't connect Google, please try again.",
         { isError: true },
       );
     }
@@ -355,7 +355,7 @@ export default function Dashboard() {
       return;
     }
     if ("needsGoogleReconnect" in createSheetFetcher.data) {
-      shopify.toast.show("Your Google connection expired — reconnect to continue.", {
+      shopify.toast.show("Your Google connection expired, reconnect to continue.", {
         isError: true,
       });
       return;
@@ -432,7 +432,7 @@ export default function Dashboard() {
             Margin Tracker writes its diagnostic into a spreadsheet it creates
             in your own Google Drive, and reads back any New Price / New Cost
             values you type into it. Connect your Google account to turn that
-            on — sync from Shopify still works without it.
+            on: sync from Shopify still works without it.
           </s-paragraph>
           <s-link href={loaderData.connectUrl} target="_top">
             Connect Google
@@ -451,7 +451,7 @@ export default function Dashboard() {
           <s-paragraph>
             Sync checks every product&apos;s cost against its price and the
             last 30 days of sales, then tells you exactly how much money
-            you&apos;re losing on anything selling below cost — plus which
+            you&apos;re losing on anything selling below cost, plus which
             products are priced too thin to be worth selling. This only
             reads from Shopify; nothing in your store changes.
           </s-paragraph>
@@ -504,7 +504,7 @@ export default function Dashboard() {
                     {pluralize(result.summary.noCostCount, "product")}
                   </s-text>{" "}
                   have no cost recorded in Shopify, so margin can&apos;t be
-                  calculated for them at all — this is the single most
+                  calculated for them at all: this is the single most
                   useful thing you can fix before your next sync.
                 </s-paragraph>
                 <s-paragraph>
@@ -539,7 +539,7 @@ export default function Dashboard() {
                       <s-table-cell>{row.sku}</s-table-cell>
                       <s-table-cell>
                         {row.cost === null
-                          ? "—"
+                          ? "N/A"
                           : formatMoney(row.cost, row.currencyCode || currencyCode)}
                       </s-table-cell>
                       <s-table-cell>
@@ -549,7 +549,7 @@ export default function Dashboard() {
                       <s-table-cell>{row.unitsSold30d}</s-table-cell>
                       <s-table-cell>
                         {row.profit30d === null ? (
-                          "—"
+                          "N/A"
                         ) : (
                           <s-text tone="critical">
                             {formatMoney(
@@ -589,7 +589,7 @@ export default function Dashboard() {
                       <s-table-cell>{row.sku}</s-table-cell>
                       <s-table-cell>
                         {row.cost === null
-                          ? "—"
+                          ? "N/A"
                           : formatMoney(row.cost, row.currencyCode || currencyCode)}
                       </s-table-cell>
                       <s-table-cell>
@@ -599,7 +599,7 @@ export default function Dashboard() {
                       <s-table-cell>{row.unitsSold30d}</s-table-cell>
                       <s-table-cell>
                         {row.profit30d === null
-                          ? "—"
+                          ? "N/A"
                           : formatMoney(row.profit30d, row.currencyCode || currencyCode)}
                       </s-table-cell>
                     </s-table-row>

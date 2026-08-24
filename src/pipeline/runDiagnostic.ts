@@ -33,7 +33,7 @@ export async function runDiagnostic(
 
   report(`${summary.lowMarginCount} products below ${config.lowMarginThreshold * 100}% margin.`);
   report(
-    `${summary.belowCostCount} products below cost — ${summary.belowCostLoss.toFixed(2)} ${summary.currencyCode} lost in the last ${config.lookbackDays} days.`,
+    `${summary.belowCostCount} products below cost, ${summary.belowCostLoss.toFixed(2)} ${summary.currencyCode} lost in the last ${config.lookbackDays} days.`,
   );
   report(`${summary.noCostCount} products have no cost recorded.`);
 

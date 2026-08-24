@@ -45,7 +45,7 @@ function summaryRows(summary: DiagnosticSummary): string[][] {
   return [
     [`${summary.lowMarginCount} products are selling below 20% margin.`],
     [
-      `${summary.belowCostCount} products are selling BELOW COST — you lost ` +
+      `${summary.belowCostCount} products are selling BELOW COST: you lost ` +
         `${summary.belowCostLoss.toFixed(2)} ${summary.currencyCode} in the last 30 days.`,
     ],
     [`${summary.noCostCount} products have no cost recorded, so we can't check them.`],

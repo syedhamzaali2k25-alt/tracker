@@ -120,7 +120,7 @@ export default function History() {
         <s-section heading="No pushes yet">
           <s-paragraph>
             Every time you push price/cost changes to Shopify from the
-            dashboard, it shows up here — with an Undo button — so you can
+            dashboard, it shows up here with an Undo button, so you can
             reverse it later if something looks wrong.
           </s-paragraph>
         </s-section>

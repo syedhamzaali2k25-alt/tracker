@@ -7,7 +7,7 @@
 console.error(
   "npm run preview no longer works from the CLI: the Fix tab now lives in a Google Sheet " +
     "connected via per-merchant OAuth, which requires a browser to authorize. Run the app " +
-    "(`cd app && npm run dev`) and use its \"Push changes\" button instead — it previews the " +
+    "(`cd app && npm run dev`) and use its \"Push changes\" button instead, which previews the " +
     "same way before asking you to confirm.",
 );
 process.exitCode = 1;

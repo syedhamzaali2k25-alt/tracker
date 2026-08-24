@@ -50,7 +50,7 @@ export async function undoBatch(
     const names = failedClears.map((id) => describeVariant(entries, id)).join(", ");
     report(
       `Warning: could not clear cost back to "no cost recorded" for: ${names}. ` +
-        "Their cost field may still show the value set by apply — check them manually in Shopify admin.",
+        "Their cost field may still show the value set by apply. Check them manually in Shopify admin.",
     );
   }
 
