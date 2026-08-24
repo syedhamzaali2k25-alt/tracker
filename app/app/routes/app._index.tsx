@@ -31,6 +31,14 @@ import {
   saveSpreadsheetId,
 } from "../google-account.server";
 import { saveBatch } from "../push-batches.server";
+import { SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS } from "../billing-plan";
+import {
+  gateState,
+  getSubscription,
+  hasPushAccess,
+  trialDaysLeft,
+  type SubscriptionGateState,
+} from "../subscription.server";
 
 function spreadsheetUrlFor(spreadsheetId: string): string {
   return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
@@ -41,6 +49,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
   const connection = await getGoogleConnection(session.shop);
+  const subscription = await getSubscription(session.shop);
 
   return {
     googleConnected: connection !== null,
@@ -48,6 +57,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     connectUrl: getGoogleConnectUrl(session.shop),
     googleJustConnected: url.searchParams.get("googleConnected") === "1",
     googleError: url.searchParams.get("googleError"),
+    subscriptionState: gateState(subscription),
+    trialDaysLeft: trialDaysLeft(subscription?.trialEndsAt ?? null),
+    billingApproved: url.searchParams.get("billingApproved") === "1",
+    billingDeclined: url.searchParams.get("billingDeclined") === "1",
   };
 };
 
@@ -76,6 +89,10 @@ interface NeedsGoogleReconnect {
   needsGoogleReconnect: true;
 }
 
+interface NeedsSubscription {
+  needsSubscription: true;
+}
+
 interface ActionError {
   error: string;
 }
@@ -87,6 +104,7 @@ type ActionResponse =
   | ApplyResult
   | NeedsGoogleConnect
   | NeedsGoogleReconnect
+  | NeedsSubscription
   | ActionError;
 
 /**
@@ -184,6 +202,14 @@ export const action = async ({
     }
 
     if (intent === "preview") {
+      // The button that leads here is hidden client-side when the shop
+      // isn't subscribed, but a hidden button is not a gate — this is the
+      // one that actually blocks it. Checked here rather than only at
+      // "apply" so the merchant sees the upgrade prompt before spending a
+      // Sheets read on a preview they can't act on.
+      if (!hasPushAccess(await getSubscription(session.shop))) {
+        return { needsSubscription: true } satisfies NeedsSubscription;
+      }
       try {
         const googleContext = await requireExistingGoogleContext(session.shop);
         if (!googleContext.ok) return googleContext.response;
@@ -199,6 +225,13 @@ export const action = async ({
     }
 
     if (intent === "apply") {
+      // Same server-side gate as "preview" — the merchant could only have
+      // gotten a preview to confirm if they passed that check, but the
+      // subscription could have lapsed in the seconds since, so this is
+      // checked again rather than trusted from the earlier step.
+      if (!hasPushAccess(await getSubscription(session.shop))) {
+        return { needsSubscription: true } satisfies NeedsSubscription;
+      }
       const shopContext = toShopContext(session);
       console.log(`[action] intent=apply session.shop=${session.shop} shopContext.shop=${shopContext.shop}`);
       const entries = JSON.parse(String(formData.get("entries"))) as FixEntry[];
@@ -227,6 +260,9 @@ function pluralize(count: number, noun: string): string {
 }
 
 const PUSH_MODAL_ID = "push-changes-modal";
+const UPGRADE_MODAL_ID = "upgrade-modal";
+
+const RESUBSCRIBE_STATES: SubscriptionGateState[] = ["cancelled", "declined", "expired", "frozen"];
 
 export default function Dashboard() {
   const shopify = useAppBridge();
@@ -271,6 +307,9 @@ export default function Dashboard() {
     (previewFetcher.data && "needsGoogleReconnect" in previewFetcher.data);
   const googleConnected = loaderData.googleConnected && !googleReconnectNeeded;
 
+  const canPushChanges =
+    loaderData.subscriptionState === "trialing" || loaderData.subscriptionState === "active";
+
   const errorMessage =
     syncFetcher.data && "error" in syncFetcher.data ? syncFetcher.data.error : undefined;
   const result =
@@ -294,8 +333,17 @@ export default function Dashboard() {
   const createSheet = () =>
     createSheetFetcher.submit({ intent: "createSheet" }, { method: "POST" });
 
-  const pushChanges = () =>
+  const pushChanges = () => {
+    // Client-side check for an instant response — no round trip needed to
+    // tell a free shop what "Push changes" costs. The server checks again
+    // on the "preview" and "apply" intents themselves; this is only ever a
+    // convenience, never the actual gate.
+    if (!canPushChanges) {
+      shopify.modal.show(UPGRADE_MODAL_ID);
+      return;
+    }
     previewFetcher.submit({ intent: "preview" }, { method: "POST" });
+  };
 
   const confirmPush = () => {
     if (!activePreview) return;
@@ -309,7 +357,8 @@ export default function Dashboard() {
     setSubmittedPreview(activePreview);
   };
 
-  // Toast once for whatever the Google OAuth redirect landed us here with.
+  // Toast once for whatever the Google OAuth or billing redirect landed us
+  // here with.
   useEffect(() => {
     if (loaderData.googleJustConnected) {
       shopify.toast.show("Google connected.");
@@ -318,6 +367,10 @@ export default function Dashboard() {
         "Couldn't connect Google, please try again.",
         { isError: true },
       );
+    } else if (loaderData.billingApproved) {
+      shopify.toast.show("Subscription active. You can push changes now.");
+    } else if (loaderData.billingDeclined) {
+      shopify.toast.show("Subscription not approved.", { isError: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -327,6 +380,10 @@ export default function Dashboard() {
   useEffect(() => {
     if (!previewFetcher.data) return;
 
+    if ("needsSubscription" in previewFetcher.data) {
+      shopify.modal.show(UPGRADE_MODAL_ID);
+      return;
+    }
     if ("needsGoogleConnect" in previewFetcher.data || "needsGoogleReconnect" in previewFetcher.data) {
       shopify.toast.show("Connect Google to read the Fix tab.", { isError: true });
       return;
@@ -372,6 +429,13 @@ export default function Dashboard() {
 
     shopify.modal.hide(PUSH_MODAL_ID);
 
+    // Only reachable if the subscription lapsed in the moments between a
+    // successful preview and clicking confirm — the preview step already
+    // caught the common case.
+    if ("needsSubscription" in applyFetcher.data) {
+      shopify.modal.show(UPGRADE_MODAL_ID);
+      return;
+    }
     if ("error" in applyFetcher.data) {
       shopify.toast.show(applyFetcher.data.error, { isError: true });
       return;
@@ -395,6 +459,8 @@ export default function Dashboard() {
 
   const sheetActionsUnlocked = googleConnected;
   const persistedSheetUrl = sheetUrl ?? loaderData.spreadsheetUrl ?? undefined;
+
+  const needsResubscribe = RESUBSCRIBE_STATES.includes(loaderData.subscriptionState);
 
   return (
     <s-page heading="Margin Tracker">
@@ -437,6 +503,33 @@ export default function Dashboard() {
           <s-link href={loaderData.connectUrl} target="_top">
             Connect Google
           </s-link>
+        </s-banner>
+      )}
+
+      {loaderData.subscriptionState === "trialing" && loaderData.trialDaysLeft !== null && (
+        <s-banner tone="info" heading={`${loaderData.trialDaysLeft} day${loaderData.trialDaysLeft === 1 ? "" : "s"} left in your free trial`}>
+          <s-paragraph>
+            After the trial, pushing changes, History/Undo, and the weekly
+            email alert are ${SUBSCRIPTION_PRICE}/month. Sync and the Google
+            Sheet stay free either way.
+          </s-paragraph>
+        </s-banner>
+      )}
+
+      {needsResubscribe && (
+        <s-banner tone="warning" heading="Pushing changes is paused">
+          <s-paragraph>
+            {loaderData.subscriptionState === "cancelled"
+              ? "Your subscription was cancelled."
+              : loaderData.subscriptionState === "declined"
+                ? "The subscription charge wasn't approved."
+                : loaderData.subscriptionState === "expired"
+                  ? "The subscription confirmation expired before it was approved."
+                  : "Shopify has paused billing for this store."}{" "}
+            Sync, the dashboard, and the Google Sheet still work. Resubscribe
+            to push changes again.
+          </s-paragraph>
+          <s-link href="/app/billing">Manage billing</s-link>
         </s-banner>
       )}
 
@@ -673,6 +766,43 @@ export default function Dashboard() {
           onClick={() => shopify.modal.hide(PUSH_MODAL_ID)}
         >
           Cancel
+        </s-button>
+      </s-modal>
+
+      <s-modal id={UPGRADE_MODAL_ID} heading="Upgrade to push changes">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            Margin Tracker is free to sync, browse the full dashboard, and
+            build your Google Sheet. Pushing New Price / New Cost values back
+            to Shopify needs the paid plan, along with History, Undo, and the
+            weekly email alert.
+          </s-paragraph>
+          <s-paragraph>
+            <s-text type="strong">
+              ${SUBSCRIPTION_PRICE}/month, {SUBSCRIPTION_TRIAL_DAYS}-day free trial.
+            </s-text>
+          </s-paragraph>
+          {needsResubscribe && (
+            <s-paragraph>
+              {loaderData.subscriptionState === "cancelled" &&
+                "Your previous subscription was cancelled."}
+              {loaderData.subscriptionState === "declined" &&
+                "The subscription charge wasn't approved last time."}
+              {loaderData.subscriptionState === "expired" &&
+                "The confirmation expired before it was approved last time."}
+              {loaderData.subscriptionState === "frozen" &&
+                "Shopify paused billing for this store."}
+            </s-paragraph>
+          )}
+        </s-stack>
+        <s-button slot="primary-action" variant="primary" href="/app/billing/start">
+          {needsResubscribe ? "Resubscribe" : "Start free trial"}
+        </s-button>
+        <s-button
+          slot="secondary-actions"
+          onClick={() => shopify.modal.hide(UPGRADE_MODAL_ID)}
+        >
+          Not now
         </s-button>
       </s-modal>
     </s-page>

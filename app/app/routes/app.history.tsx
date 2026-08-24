@@ -16,11 +16,23 @@ import {
   type PushBatchSummary,
 } from "../push-batches.server";
 import { toShopContext } from "../shop-context.server";
+import { gateState, getSubscription, hasPushAccess } from "../subscription.server";
 
+/**
+ * History and Undo exist only as a record of pushes, which are themselves
+ * gated on a subscription — so the whole page is gated the same way,
+ * rather than showing a list of past pushes a free shop can't act on.
+ */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  const subscription = await getSubscription(session.shop);
+
+  if (!hasPushAccess(subscription)) {
+    return { locked: true as const, subscriptionState: gateState(subscription) };
+  }
+
   const batches = await listBatches(session.shop);
-  return { batches };
+  return { locked: false as const, batches };
 };
 
 interface UndoResponse {
@@ -38,6 +50,13 @@ export const action = async ({
   request,
 }: ActionFunctionArgs): Promise<ActionResponse> => {
   const { session } = await authenticate.admin(request);
+
+  // Defense in depth: the page itself is hidden behind the same gate, but a
+  // subscription could lapse while it's still open in a tab.
+  if (!hasPushAccess(await getSubscription(session.shop))) {
+    return { error: "Undo needs an active subscription. Manage billing from the dashboard." } satisfies UndoError;
+  }
+
   const formData = await request.formData();
   const batchId = String(formData.get("batchId"));
 
@@ -73,7 +92,7 @@ const UNDO_MODAL_ID = "undo-batch-modal";
 
 export default function History() {
   const shopify = useAppBridge();
-  const { batches } = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
   const undoFetcher = useFetcher<typeof action>();
 
   const [pendingBatch, setPendingBatch] = useState<PushBatchSummary | null>(null);
@@ -113,6 +132,33 @@ export default function History() {
     undoFetcher.data && !("error" in undoFetcher.data)
       ? undoFetcher.data.batchId
       : undefined;
+
+  if (loaderData.locked) {
+    const reason =
+      loaderData.subscriptionState === "cancelled"
+        ? "Your subscription was cancelled."
+        : loaderData.subscriptionState === "declined"
+          ? "The subscription charge wasn't approved."
+          : loaderData.subscriptionState === "expired"
+            ? "The subscription confirmation expired before it was approved."
+            : loaderData.subscriptionState === "frozen"
+              ? "Shopify has paused billing for this store."
+              : "History and Undo need the paid plan.";
+
+    return (
+      <s-page heading="History">
+        <s-section heading="History requires a subscription">
+          <s-paragraph>
+            History and Undo only exist as a record of pushes, which need an
+            active subscription. {reason}
+          </s-paragraph>
+          <s-link href="/app/billing">Manage billing</s-link>
+        </s-section>
+      </s-page>
+    );
+  }
+
+  const { batches } = loaderData;
 
   return (
     <s-page heading="History">

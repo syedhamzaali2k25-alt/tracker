@@ -14,21 +14,21 @@ datasource db {
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
@@ -96,4 +96,26 @@ model WatchmanRun {
   // JSON-serialized { rows: MarginRow[], summary: DiagnosticSummary }
   data  String
   ranAt DateTime @updatedAt
+}
+
+// Per-shop billing state for the paid "Push changes" gate. This is a
+// read-optimized mirror of Shopify's own AppSubscription, not the source of
+// truth (Shopify is). It's kept in sync two ways: the billing confirmation
+// redirect (app/routes/app.billing.callback.tsx) writes it right after a
+// merchant approves or declines, and the APP_SUBSCRIPTIONS_UPDATE webhook
+// (app/routes/webhooks.app_subscriptions.update.tsx) writes it for every
+// change Shopify makes on its own — most importantly a merchant cancelling
+// from inside Shopify admin, which never touches our app at all otherwise.
+// status mirrors AppSubscription.status verbatim (ACTIVE, CANCELLED,
+// DECLINED, EXPIRED, FROZEN, PENDING) rather than being pre-collapsed into
+// a boolean, so the dashboard can show the merchant what actually happened
+// instead of just "not subscribed".
+model Subscription {
+  shop                  String    @id
+  shopifySubscriptionId String?
+  status                String
+  isTest                Boolean   @default(false)
+  trialEndsAt           DateTime?
+  currentPeriodEnd      DateTime?
+  updatedAt             DateTime  @updatedAt
 }

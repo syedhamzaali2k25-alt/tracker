@@ -18,6 +18,13 @@ api_version = "2025-10"
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
+  # The only way to learn about a subscription change a merchant makes from
+  # inside Shopify admin instead of our own app (most importantly:
+  # cancelling). Handled by: /app/routes/webhooks.app_subscriptions.update.tsx
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "/webhooks/app_subscriptions/update"
+
   # Webhooks can have filters
   # Only receive webhooks for product updates with a product price >= 10.00
   # See: https://shopify.dev/docs/apps/build/webhooks/customize/filters

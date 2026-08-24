@@ -17,6 +17,7 @@ import db from "../db.server";
 import { decrypt, isEncrypted } from "../crypto.server";
 import { getShopSettings } from "../shop-settings.server";
 import { getLastWatchmanRun, saveWatchmanRun } from "../watchman-run.server";
+import { getSubscription, hasPushAccess } from "../subscription.server";
 import { sendEmail } from "../email.server";
 
 function decryptAccessToken(raw: string): string {
@@ -47,20 +48,28 @@ async function checkShop(shopContext: ShopContext): Promise<void> {
   const diff = diffMarginRows(previous?.rows, rows);
 
   if (hasChanges(diff)) {
-    const settings = await getShopSettings(shop);
-    if (settings.emailAlerts) {
-      const to = settings.alertEmail ?? (await fetchShopEmail(shopContext));
-      if (to) {
-        const email = buildWeeklyAlertEmail(shop, diff, summary.currencyCode);
-        await sendEmail({ to, ...email });
-        console.log(
-          `[weekly-check] ${shop}: emailed ${to} — ${diff.newlyBelowCost.length} newly below cost, ${diff.newlyLowMargin.length} newly low-margin`,
-        );
-      } else {
-        console.warn(`[weekly-check] ${shop}: has changes to report but no email address available (no override set, no Shopify shop email) — skipping send`);
-      }
+    // The weekly email is a paid feature, same gate as pushing changes —
+    // checked here rather than skipping checkShop() entirely, so the diff
+    // baseline (saveWatchmanRun below) still advances for a free shop and
+    // they get a full backlog of changes the moment they do subscribe.
+    if (!hasPushAccess(await getSubscription(shop))) {
+      console.log(`[weekly-check] ${shop}: has changes but no active subscription — not sending`);
     } else {
-      console.log(`[weekly-check] ${shop}: has changes but emailAlerts is off — not sending`);
+      const settings = await getShopSettings(shop);
+      if (settings.emailAlerts) {
+        const to = settings.alertEmail ?? (await fetchShopEmail(shopContext));
+        if (to) {
+          const email = buildWeeklyAlertEmail(shop, diff, summary.currencyCode);
+          await sendEmail({ to, ...email });
+          console.log(
+            `[weekly-check] ${shop}: emailed ${to} — ${diff.newlyBelowCost.length} newly below cost, ${diff.newlyLowMargin.length} newly low-margin`,
+          );
+        } else {
+          console.warn(`[weekly-check] ${shop}: has changes to report but no email address available (no override set, no Shopify shop email) — skipping send`);
+        }
+      } else {
+        console.log(`[weekly-check] ${shop}: has changes but emailAlerts is off — not sending`);
+      }
     }
   } else {
     console.log(`[weekly-check] ${shop}: no new below-cost/low-margin products since last run`);

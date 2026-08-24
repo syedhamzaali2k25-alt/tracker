@@ -157,6 +157,7 @@ instead).
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Yes | The matching secret from that same OAuth client. |
 | `SENDGRID_API_KEY` | Cron service only | SendGrid → Settings → API Keys → Create API Key, "Restricted Access" with only "Mail Send" permission. Only the weekly-check cron service sends email; the web service never needs this. |
 | `EMAIL_FROM` | Cron service only | The single sender address you verified in SendGrid (Settings → Sender Authentication → Single Sender Verification — no domain needed, see "Weekly margin alerts" below). Must match exactly what you verified. |
+| `SHOPIFY_BILLING_TEST_MODE` | No | Whether "Start free trial" creates a Shopify test charge instead of a real one. Defaults to `true` unless `NODE_ENV=production`, so local dev and a tunnel run never risk a real charge without any setup. Set explicitly (`true`/`false`) to override that default. |
 | `SHOP_CUSTOM_DOMAIN` | No | Only if you support a merchant's custom domain on the storefront side; see the Shopify template's own docs. Unset by default. |
 | `PORT` | No | `@react-router/serve` listens on this; your host sets it automatically (Railway/Render/Fly all do). Defaults to 3000 if unset. |
 | `NODE_ENV` | No | Already set to `production` in the Dockerfile; most hosts also set this themselves. |
@@ -216,6 +217,109 @@ Google's `invalid_grant` error; the app catches that specifically
 spreadsheetId link so reconnecting resumes the same sheet instead of
 creating a new one — and the dashboard falls back to the "Connect Google"
 empty state instead of showing a crash.
+
+### Billing
+
+Margin Tracker is free to install, sync, browse the full dashboard, and
+create/read the Google Sheet. Pushing New Price / New Cost values back to
+Shopify is the paid feature — one plan, $15/month with a 14-day free trial
+(`app/app/billing-plan.ts`) — and History/Undo (which only exist as a record
+of pushes) and the weekly email alert are gated the same way. This uses
+Shopify's classic Billing API (`appSubscriptionCreate` etc.) via the
+`billing` helper `@shopify/shopify-app-react-router` exposes from
+`authenticate.admin()`, configured in `app/app/shopify.server.ts` — not
+Stripe or any other processor, and not the newer "Shopify App Pricing"
+managed-pricing system.
+
+**The gate is server-side, not a hidden button.** The dashboard's "Push
+changes" button, and the whole History page, check the subscription
+client-side only to show an upgrade prompt instantly with no round trip; the
+actual gate is `hasPushAccess()` (`app/app/subscription.server.ts`) checked
+again inside the `preview`/`apply` actions in `app._index.tsx`, the loader
+and `undo` action in `app.history.tsx`, and the weekly cron job before it
+sends an email. A request that skips the UI entirely still hits the same
+check.
+
+**Where subscription status is stored.** A `Subscription` row per shop
+(`app/prisma/schema.prisma`) mirrors Shopify's own `AppSubscription` —
+`status` (`ACTIVE`/`CANCELLED`/`DECLINED`/`EXPIRED`/`FROZEN`/`PENDING`,
+copied verbatim), `trialEndsAt` (derived once from `createdAt + trialDays`
+at subscription-creation time, not recomputed from "now" each check), and
+`shopifySubscriptionId`. This is a read-optimized mirror, not the source of
+truth — Shopify is — kept in sync two ways:
+
+- **The merchant approves or declines from inside the app.** Clicking
+  "Start free trial" (`app/app/routes/app.billing.start.tsx`) calls
+  `billing.request()`, which redirects to Shopify's own confirmation page;
+  approving or declining redirects back to
+  `app/app/routes/app.billing.callback.tsx`, which re-checks the live
+  subscription and writes the result.
+- **The merchant cancels (or Shopify freezes billing) from inside Shopify
+  admin, never touching our app.** This is the case Shopify doesn't tell us
+  about through any redirect, so it needs a webhook:
+  `APP_SUBSCRIPTIONS_UPDATE`, registered in `shopify.app.toml` and handled
+  by `app/app/routes/webhooks.app_subscriptions.update.tsx`. It's the only
+  way `Subscription.status` ever finds out about an out-of-band
+  cancellation — without it, a merchant who cancels from Shopify's own
+  billing page would keep pushing changes indefinitely, since nothing else
+  in the app would know.
+
+**States the app actually distinguishes**
+(`SubscriptionGateState` in `app/app/subscription.server.ts`): `trialing`
+and `active` both unlock everything (the difference is only which banner
+shows); `none`, `pending`, `cancelled`, `declined`, `expired`, and `frozen`
+all lock pushing/History/the email but never touch sync, the dashboard, or
+the Google Sheet — a cancelled shop keeps reading, it doesn't lose
+everything. The Billing page (`app/app/routes/app.billing.tsx`, linked from
+the app nav) shows the current state in plain language, the trial countdown,
+and a cancel button for a subscribed shop or a resubscribe link for anyone
+else.
+
+**Test charges.** `SHOPIFY_BILLING_TEST_MODE` (see the table above) controls
+`isTest` on every `billing.request`/`check`/`cancel` call. It defaults to
+`true` outside of `NODE_ENV=production`, so local dev and a Shopify CLI
+tunnel run never create a real charge without any setup, and defaults to
+`false` in production so real merchants are actually billed. Shopify test
+charges never touch a card regardless of store type; dev/demo stores can't
+be charged at all, test mode or not.
+
+**Partner Dashboard setup this needs, beyond what's already there:**
+
+- Nothing to toggle for the charge itself — classic Billing API apps define
+  their plan/price/trial in code (`app/app/billing-plan.ts` +
+  `shopify.server.ts`), not in a Partner Dashboard "Pricing" configuration
+  screen. That configuration screen is for the newer Shopify App Pricing
+  (managed pricing) system, which this app doesn't use.
+- `shopify app deploy` needs to run at least once after this change so the
+  `app_subscriptions/update` webhook subscription in `shopify.app.toml`
+  actually gets registered with Shopify — like any other webhook topic in
+  that file, editing the TOML alone doesn't reach Shopify until deployed.
+- The App Store listing's **Pricing details** section (Partner Dashboard →
+  your app → Distribution → Shopify App Store listing → Pricing) needs to
+  describe this accurately for the review team and for merchants: free to
+  install, $15/month with a 14-day free trial to unlock pushing
+  changes/History/the weekly email. This is listing copy Shopify reviews
+  for accuracy against what the app actually charges — it doesn't drive the
+  charge itself the way it would for Shopify App Pricing.
+
+**What changes for App Store submission now that the app charges money:**
+
+- The **Pricing details** section above becomes required to fill in
+  accurately (price, trial length, what's free vs. paid) — Shopify checks
+  the listing against the app's real behavior, not just that the field is
+  non-empty.
+- The App Review team explicitly tests the billing flow before approving
+  (Shopify's own "Pass app review" checklist calls this out as a distinct
+  step from testing OAuth). Test it yourself first: with
+  `SHOPIFY_BILLING_TEST_MODE` unset (or `true`) on a non-production
+  deploy, install on a dev store, click through "Start free trial," approve
+  it on Shopify's confirmation page, and confirm the dashboard actually
+  unlocks — then also test declining, to confirm the app still works (read
+  access) rather than erroring.
+- The `write_own_subscription_contracts`/`read_own_subscription_contracts`
+  scopes some subscription docs mention are for merchant-facing selling
+  plans (Shopify Subscriptions APIs) — a completely different feature from
+  app billing. This app's own billing needs no extra access scope.
 
 ### Push history
 
@@ -306,8 +410,10 @@ its cached diagnostic (`app/app/diagnostic-cache.server.ts`), its Google
 connection (`app/app/google-account.server.ts` — refresh token and
 spreadsheetId link both gone, not just invalidated), its push history
 (`app/app/push-batches.server.ts`), its email settings
-(`app/app/shop-settings.server.ts`), and its weekly-check baseline
-(`app/app/watchman-run.server.ts`). An uninstalled shop also has no
+(`app/app/shop-settings.server.ts`), its subscription record
+(`app/app/subscription.server.ts` — Shopify cancels the actual charge on
+uninstall independently; this just clears our own mirror of it), and its
+weekly-check baseline (`app/app/watchman-run.server.ts`). An uninstalled shop also has no
 `Session` row left, which is what keeps it out of the weekly job's shop
 list in the first place (see "Weekly margin alerts" above).
 
