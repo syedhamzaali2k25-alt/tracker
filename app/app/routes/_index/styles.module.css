@@ -123,6 +123,8 @@
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
+  min-height: 4rem;
+  overflow: visible;
 }
 
 .logo {
@@ -138,12 +140,15 @@
    proportions instead of squeezing or cropping it into a square/circle.
    object-fit: contain is a second layer of protection against distortion
    on top of that. No border-radius/overflow clipping: nothing here
-   should crop it. */
+   should crop it. The negative vertical margin lets it visually overflow
+   .topbar's min-height (which stays fixed via overflow: visible) instead
+   of stretching the bar taller as the logo grows. */
 .logoMarkWrap {
-  height: 3.5rem;
+  height: 3.25rem;
   width: auto;
   flex: none;
   object-fit: contain;
+  margin: -0.5rem 0;
 }
 
 .navLinks {
@@ -1024,6 +1029,8 @@
   gap: 1rem 1.5rem;
   font-size: 0.85rem;
   color: var(--ink-500);
+  min-height: 11rem;
+  overflow: visible;
 }
 
 .footerBrand {
@@ -1034,8 +1041,9 @@
 }
 
 .footerBrand .logoMarkWrap {
-  height: 2.5rem;
+  height: 2.75rem;
   width: auto;
+  margin: -0.3rem 0;
 }
 
 .footerLinks {
