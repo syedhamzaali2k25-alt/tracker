@@ -1,5 +1,5 @@
 import type { ShopContext } from "../shopify/client.js";
-import { applyCostUpdates, applyPriceUpdates } from "../shopify/mutations.js";
+import { applyCostUpdates, applyPriceUpdates, applyTitleUpdates } from "../shopify/mutations.js";
 import type { BackupEntry } from "../types.js";
 
 export interface UndoResult {
@@ -40,6 +40,13 @@ export async function undoBatch(
     inventoryItemId: e.inventoryItemId,
     cost: e.cost,
   }));
+  // Only the entry that carried a batch's title change has a non-null
+  // title here (applyChanges.ts dedupes so exactly one row per product
+  // does) — restoring straight from that avoids a redundant productUpdate
+  // call per variant row of the same product.
+  const titleUpdates = entries
+    .filter((e): e is BackupEntry & { title: string } => e.title !== null)
+    .map((e) => ({ productId: e.productId, title: e.title }));
 
   report(`Restoring ${priceUpdates.length} price(s)...`);
   await applyPriceUpdates(shopContext, priceUpdates);
@@ -54,7 +61,12 @@ export async function undoBatch(
     );
   }
 
-  report("Done. Prices and costs restored.");
+  if (titleUpdates.length > 0) {
+    report(`Restoring ${titleUpdates.length} title(s)...`);
+    await applyTitleUpdates(shopContext, titleUpdates);
+  }
+
+  report("Done. Prices, costs, and titles restored.");
 
   return { restored: entries.length };
 }

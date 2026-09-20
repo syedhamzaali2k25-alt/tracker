@@ -28,7 +28,7 @@ export const EXACT_LOCATION = "EXACT_LOCATION";
  * — see ensureFormatted.
  */
 const DIAGNOSTIC_FORMAT_VERSION = "diagnostic-v1";
-const FIX_FORMAT_VERSION = "fix-v1";
+const FIX_FORMAT_VERSION = "fix-v2";
 
 function columnLetter(index: number): string {
   // Only ever called with this project's own small, fixed column indices
@@ -280,9 +280,10 @@ const FIX_COLUMNS = {
   currentCost: 4,
   newPrice: 5,
   newCost: 6,
-  productId: 7,
-  variantId: 8,
-  inventoryItemId: 9,
+  newTitle: 7,
+  productId: 8,
+  variantId: 9,
+  inventoryItemId: 10,
 } as const;
 
 /** Exported for testing — see sheetFormatting.test.ts. Not meant to be called directly by anything else. */
@@ -292,8 +293,8 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
   const anchorRow = FIX_DATA_START_ROW + 1; // 1-indexed for formulas
 
   return [
-    // New Price / New Cost get a distinct background so it's obvious
-    // where a merchant is meant to type.
+    // New Price / New Cost / New Title get a distinct background so it's
+    // obvious where a merchant is meant to type.
     {
       repeatCell: {
         range: {
@@ -301,7 +302,7 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
           startRowIndex: FIX_DATA_START_ROW,
           endRowIndex: MAX_ROW,
           startColumnIndex: FIX_COLUMNS.newPrice,
-          endColumnIndex: FIX_COLUMNS.newCost + 1,
+          endColumnIndex: FIX_COLUMNS.newTitle + 1,
         },
         cell: { userEnteredFormat: { backgroundColor: LIGHT_YELLOW } },
         fields: "userEnteredFormat.backgroundColor",

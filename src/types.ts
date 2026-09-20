@@ -35,4 +35,12 @@ export interface BackupEntry {
   variantTitle: string;
   price: number;
   cost: number | null;
+  /**
+   * The product's title before this batch changed it, or null if this row
+   * didn't carry the title change. Title applies to the whole product, not
+   * a single variant, so on a multi-variant product only one of its rows'
+   * entries has this set (see applyChanges.ts) — undo restores it from
+   * whichever entry that is, instead of once per variant row.
+   */
+  title: string | null;
 }

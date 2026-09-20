@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isValidVariantId, parseFixRow, parseNumber } from "./fixSheet.js";
+import {
+  changedEntries,
+  isValidVariantId,
+  parseFixRow,
+  parseNumber,
+  parseTitle,
+  type FixEntry,
+} from "./fixSheet.js";
 
 function row(overrides: Partial<{
   productTitle: string;
@@ -9,6 +16,7 @@ function row(overrides: Partial<{
   currentCost: string;
   newPrice: string;
   newCost: string;
+  newTitle: string;
   productId: string;
   variantId: string;
   inventoryItemId: string;
@@ -20,6 +28,7 @@ function row(overrides: Partial<{
     currentCost: "1000",
     newPrice: "",
     newCost: "",
+    newTitle: "",
     productId: "gid://shopify/Product/1",
     variantId: "gid://shopify/ProductVariant/1",
     inventoryItemId: "gid://shopify/InventoryItem/1",
@@ -33,6 +42,7 @@ function row(overrides: Partial<{
     merged.currentCost,
     merged.newPrice,
     merged.newCost,
+    merged.newTitle,
     merged.productId,
     merged.variantId,
     merged.inventoryItemId,
@@ -129,4 +139,76 @@ test("parseNumber does not confuse a lone thousands comma with a decimal comma",
   // No dot present, so the comma stays a thousands separator, matching the
   // existing "1,150" -> 1150 behavior rather than being reinterpreted as 1.15.
   assert.equal(parseNumber("1,150"), 1150);
+});
+
+test("parseTitle treats a blank cell as null, not an empty-string title", () => {
+  assert.equal(parseTitle(""), null);
+  assert.equal(parseTitle(undefined), null);
+});
+
+test("parseTitle trims stray whitespace and treats whitespace-only as blank", () => {
+  assert.equal(parseTitle("  New Name  "), "New Name");
+  assert.equal(parseTitle("   "), null);
+});
+
+test("parseTitle passes through an ordinary title unchanged", () => {
+  assert.equal(parseTitle("Blue Shirt (Reissue)"), "Blue Shirt (Reissue)");
+});
+
+test("parseFixRow parses a New Title cell into newTitle", () => {
+  const { entry, warning } = parseFixRow(row({ newTitle: "Blue Shirt (Reissue)" }));
+
+  assert.equal(warning, null);
+  assert.equal(entry!.newTitle, "Blue Shirt (Reissue)");
+});
+
+test("parseFixRow leaves newTitle null when the New Title cell is blank", () => {
+  const { entry } = parseFixRow(row());
+  assert.equal(entry!.newTitle, null);
+});
+
+test("parseFixRow still reads the ID columns correctly now that New Title sits before them", () => {
+  const { entry } = parseFixRow(
+    row({
+      newTitle: "Renamed",
+      productId: "gid://shopify/Product/99",
+      variantId: "gid://shopify/ProductVariant/99",
+      inventoryItemId: "gid://shopify/InventoryItem/99",
+    }),
+  );
+
+  assert.equal(entry!.productId, "gid://shopify/Product/99");
+  assert.equal(entry!.variantId, "gid://shopify/ProductVariant/99");
+  assert.equal(entry!.inventoryItemId, "gid://shopify/InventoryItem/99");
+});
+
+function fixEntry(overrides: Partial<FixEntry> = {}): FixEntry {
+  return {
+    productTitle: "Blue Shirt",
+    variantTitle: "M",
+    productId: "gid://shopify/Product/1",
+    variantId: "gid://shopify/ProductVariant/1",
+    inventoryItemId: "gid://shopify/InventoryItem/1",
+    currentPrice: 1150,
+    currentCost: 1000,
+    newPrice: null,
+    newCost: null,
+    newTitle: null,
+    ...overrides,
+  };
+}
+
+test("changedEntries includes a row whose only change is a new title", () => {
+  const changed = changedEntries([fixEntry({ newTitle: "Blue Shirt (Reissue)" })]);
+  assert.equal(changed.length, 1);
+});
+
+test("changedEntries drops a row whose New Title matches the current title", () => {
+  const changed = changedEntries([fixEntry({ productTitle: "Blue Shirt", newTitle: "Blue Shirt" })]);
+  assert.equal(changed.length, 0);
+});
+
+test("changedEntries still includes price/cost-only changes when title is untouched", () => {
+  const changed = changedEntries([fixEntry({ newPrice: 1200 })]);
+  assert.equal(changed.length, 1);
 });

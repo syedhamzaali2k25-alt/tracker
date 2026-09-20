@@ -11,6 +11,8 @@ export interface FixEntry {
   currentCost: number | null;
   newPrice: number | null;
   newCost: number | null;
+  /** Blank cell = no title change, same convention as newPrice/newCost being null. Applies to the whole product, not this one variant. */
+  newTitle: string | null;
 }
 
 /**
@@ -68,6 +70,13 @@ export function isValidVariantId(id: string): boolean {
   return id.startsWith(VALID_VARIANT_ID_PREFIX);
 }
 
+/** Blank (or whitespace-only) means no title change, same convention parseNumber uses for null. */
+export function parseTitle(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
 export interface ParsedFixRow {
   entry: FixEntry | null;
   /** Set when the row was skipped instead of parsed. */
@@ -83,7 +92,7 @@ export interface ParsedFixRow {
  */
 export function parseFixRow(row: string[]): ParsedFixRow {
   const productTitle = row[0] ?? "";
-  const variantId = row[8] ?? "";
+  const variantId = row[9] ?? "";
 
   if (!isValidVariantId(variantId)) {
     return {
@@ -114,16 +123,17 @@ export function parseFixRow(row: string[]): ParsedFixRow {
       currentCost: parseNumber(row[4]),
       newPrice: parseNumber(row[5]),
       newCost: parseNumber(row[6]),
-      productId: row[7] ?? "",
+      newTitle: parseTitle(row[7]),
+      productId: row[8] ?? "",
       variantId,
-      inventoryItemId: row[9] ?? "",
+      inventoryItemId: row[10] ?? "",
     },
     warning: null,
   };
 }
 
 export async function readFixEntries(ctx: GoogleContext): Promise<FixEntry[]> {
-  const values = await readRange(ctx, `${FIX_TAB}!A2:J`);
+  const values = await readRange(ctx, `${FIX_TAB}!A2:K`);
   const entries: FixEntry[] = [];
 
   for (const row of values) {
@@ -144,20 +154,26 @@ export function changedEntries(entries: FixEntry[]): FixEntry[] {
   return entries.filter(
     (e) =>
       (e.newPrice !== null && e.newPrice !== e.currentPrice) ||
-      (e.newCost !== null && e.newCost !== e.currentCost),
+      (e.newCost !== null && e.newCost !== e.currentCost) ||
+      (e.newTitle !== null && e.newTitle !== e.productTitle),
   );
 }
 
 export interface PendingEdit {
   newPrice: number | null;
   newCost: number | null;
+  newTitle: string | null;
 }
 
 export function buildPendingEditsMap(entries: FixEntry[]): Map<string, PendingEdit> {
   const map = new Map<string, PendingEdit>();
   for (const entry of entries) {
-    if (entry.newPrice !== null || entry.newCost !== null) {
-      map.set(entry.variantId, { newPrice: entry.newPrice, newCost: entry.newCost });
+    if (entry.newPrice !== null || entry.newCost !== null || entry.newTitle !== null) {
+      map.set(entry.variantId, {
+        newPrice: entry.newPrice,
+        newCost: entry.newCost,
+        newTitle: entry.newTitle,
+      });
     }
   }
   return map;

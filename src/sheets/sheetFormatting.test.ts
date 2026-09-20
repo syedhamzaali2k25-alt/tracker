@@ -113,25 +113,25 @@ test("diagnostic: below-cost conditional format references the Margin % column a
   assert.equal(rule.rule?.ranges?.[0].endColumnIndex, 12);
 });
 
-test("fix: editable background covers exactly New Price and New Cost (columns 5-6)", () => {
+test("fix: editable background covers exactly New Price, New Cost, and New Title (columns 5-7)", () => {
   const requests = fixFormattingRequests(SHEET_ID);
   const [background] = repeatCellRequests(requests).filter(
     (r) => r.cell?.userEnteredFormat?.backgroundColor !== undefined,
   );
   assert.equal(background.range?.startColumnIndex, 5);
-  assert.equal(background.range?.endColumnIndex, 7);
+  assert.equal(background.range?.endColumnIndex, 8);
 });
 
-test("fix: protected range covers exactly the three ID columns (7-9) and is warning-only", () => {
+test("fix: protected range covers exactly the three ID columns (8-10) and is warning-only", () => {
   const requests = fixFormattingRequests(SHEET_ID);
   const [protectedRange] = find(requests, "addProtectedRange");
-  assert.equal(protectedRange.protectedRange?.range?.startColumnIndex, 7);
-  assert.equal(protectedRange.protectedRange?.range?.endColumnIndex, 10);
+  assert.equal(protectedRange.protectedRange?.range?.startColumnIndex, 8);
+  assert.equal(protectedRange.protectedRange?.range?.endColumnIndex, 11);
   assert.equal(protectedRange.protectedRange?.warningOnly, true);
   assert.equal(protectedRange.protectedRange?.editors, undefined);
 });
 
-test("fix: data validation applies to New Price and New Cost, each rejecting non-numeric strict input", () => {
+test("fix: data validation applies to New Price and New Cost only — New Title is free text", () => {
   const requests = fixFormattingRequests(SHEET_ID);
   const validations = find(requests, "setDataValidation");
   const columns = validations.map((v) => v.range?.startColumnIndex).sort();

@@ -35,6 +35,7 @@ function fixEntry(overrides: Partial<FixEntry>): FixEntry {
     currentCost: 500,
     newPrice: null,
     newCost: null,
+    newTitle: null,
     ...overrides,
   };
 }
@@ -84,4 +85,30 @@ test("preserves New Cost independently of New Price", () => {
   assert.equal(preservedCount, 1);
   assert.equal(values[0][5], ""); // New Price still blank
   assert.equal(values[0][6], 600); // New Cost preserved
+});
+
+test("preserves a pending New Title independently of New Price/New Cost", () => {
+  const rows = [marginRow({ variantId: "v1" })];
+  const pendingEdits = buildPendingEditsMap([
+    fixEntry({ variantId: "v1", newTitle: "Renamed Product" }),
+  ]);
+
+  const { values, preservedCount } = buildFixRows(rows, pendingEdits);
+
+  assert.equal(preservedCount, 1);
+  assert.equal(values[0][5], ""); // New Price still blank
+  assert.equal(values[0][6], ""); // New Cost still blank
+  assert.equal(values[0][7], "Renamed Product"); // New Title preserved
+});
+
+test("New Title sits in front of the ID columns, which are unaffected", () => {
+  const rows = [marginRow({ variantId: "v1", productId: "p1", inventoryItemId: "i1" })];
+  const pendingEdits = buildPendingEditsMap([]);
+
+  const { values } = buildFixRows(rows, pendingEdits);
+
+  assert.equal(values[0][7], ""); // New Title blank
+  assert.equal(values[0][8], "p1"); // Shopify Product ID
+  assert.equal(values[0][9], "v1"); // Shopify Variant ID
+  assert.equal(values[0][10], "i1"); // Inventory Item ID
 });

@@ -1,11 +1,12 @@
 import type { ShopContext } from "../shopify/client.js";
-import { applyCostUpdates, applyPriceUpdates } from "../shopify/mutations.js";
+import { applyCostUpdates, applyPriceUpdates, applyTitleUpdates } from "../shopify/mutations.js";
 import type { FixEntry } from "../sheets/fixSheet.js";
 import type { BackupEntry } from "../types.js";
 
 export interface ApplyChangesResult {
   pricesUpdated: number;
   costsUpdated: number;
+  titlesUpdated: number;
   /** ID of the push-batch row saved before writing, for undo. Empty when there was nothing to apply. */
   batchId: string;
 }
@@ -33,20 +34,38 @@ export async function applyChanges(
   const report = onProgress ?? (() => {});
 
   if (confirmedEntries.length === 0) {
-    return { pricesUpdated: 0, costsUpdated: 0, batchId: "" };
+    return { pricesUpdated: 0, costsUpdated: 0, titlesUpdated: 0, batchId: "" };
   }
 
-  const backupEntries: BackupEntry[] = confirmedEntries.map((e) => ({
-    productId: e.productId,
-    variantId: e.variantId,
-    inventoryItemId: e.inventoryItemId,
-    productTitle: e.productTitle,
-    variantTitle: e.variantTitle,
-    price: e.currentPrice,
-    cost: e.currentCost,
-  }));
+  // A title change applies to the whole product, not one variant, so a
+  // multi-variant product with several rows in the Fix tab only gets its
+  // title backed up (and later pushed) once — from whichever row is first
+  // among its rows to carry the change — rather than once per row.
+  const titleChangeProductIds = new Set<string>();
+  const backupEntries: BackupEntry[] = [];
+  const titleUpdates: { productId: string; title: string }[] = [];
+
+  for (const e of confirmedEntries) {
+    const hasTitleChange = e.newTitle !== null && e.newTitle !== e.productTitle;
+    const isFirstForProduct = hasTitleChange && !titleChangeProductIds.has(e.productId);
+    if (isFirstForProduct) {
+      titleChangeProductIds.add(e.productId);
+      titleUpdates.push({ productId: e.productId, title: e.newTitle! });
+    }
+    backupEntries.push({
+      productId: e.productId,
+      variantId: e.variantId,
+      inventoryItemId: e.inventoryItemId,
+      productTitle: e.productTitle,
+      variantTitle: e.variantTitle,
+      price: e.currentPrice,
+      cost: e.currentCost,
+      title: isFirstForProduct ? e.productTitle : null,
+    });
+  }
+
   const batchId = await saveBatch(shopContext.shop, backupEntries);
-  report(`Saved a snapshot of the old prices/costs (batch ${batchId}).`);
+  report(`Saved a snapshot of the old prices/costs/titles (batch ${batchId}).`);
 
   const priceUpdates = confirmedEntries
     .filter((e) => e.newPrice !== null)
@@ -63,8 +82,17 @@ export async function applyChanges(
     report(`Updating ${costUpdates.length} cost(s)...`);
     await applyCostUpdates(shopContext, costUpdates);
   }
+  if (titleUpdates.length > 0) {
+    report(`Updating ${titleUpdates.length} title(s)...`);
+    await applyTitleUpdates(shopContext, titleUpdates);
+  }
 
   report("Done.");
 
-  return { pricesUpdated: priceUpdates.length, costsUpdated: costUpdates.length, batchId };
+  return {
+    pricesUpdated: priceUpdates.length,
+    costsUpdated: costUpdates.length,
+    titlesUpdated: titleUpdates.length,
+    batchId,
+  };
 }

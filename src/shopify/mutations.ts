@@ -15,6 +15,21 @@ const PRODUCT_VARIANTS_BULK_UPDATE = /* GraphQL */ `
   }
 `;
 
+const PRODUCT_UPDATE = /* GraphQL */ `
+  mutation ProductUpdate($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
+      product {
+        id
+        title
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 const INVENTORY_ITEM_UPDATE = /* GraphQL */ `
   mutation InventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
     inventoryItemUpdate(id: $id, input: $input) {
@@ -51,6 +66,13 @@ interface InventoryItemUpdateResponse {
   };
 }
 
+interface ProductUpdateResponse {
+  productUpdate: {
+    product: { id: string; title: string } | null;
+    userErrors: UserError[];
+  };
+}
+
 export interface PriceUpdate {
   productId: string;
   variantId: string;
@@ -61,6 +83,11 @@ export interface CostUpdate {
   inventoryItemId: string;
   /** null requests clearing the cost back to "not recorded". */
   cost: number | null;
+}
+
+export interface TitleUpdate {
+  productId: string;
+  title: string;
 }
 
 function assertNoErrors(operation: string, userErrors: UserError[]): void {
@@ -129,4 +156,22 @@ export async function applyCostUpdates(
   }
 
   return failedClears;
+}
+
+/**
+ * A title belongs to the product, not a variant, so callers (applyChanges,
+ * undo) are expected to have already deduped `updates` to one entry per
+ * productId — this makes no attempt to dedupe them itself, and would issue
+ * a redundant productUpdate call for each duplicate.
+ */
+export async function applyTitleUpdates(
+  shopContext: ShopContext,
+  updates: TitleUpdate[],
+): Promise<void> {
+  for (const update of updates) {
+    const data = await shopifyGraphQL<ProductUpdateResponse>(shopContext, PRODUCT_UPDATE, {
+      product: { id: update.productId, title: update.title },
+    });
+    assertNoErrors("productUpdate", data.productUpdate.userErrors);
+  }
 }

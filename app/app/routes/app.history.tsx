@@ -165,7 +165,7 @@ export default function History() {
       {batches.length === 0 ? (
         <s-section heading="No pushes yet">
           <s-paragraph>
-            Every time you push price/cost changes to Shopify from the
+            Every time you push price/cost/title changes to Shopify from the
             dashboard, it shows up here with an Undo button, so you can
             reverse it later if something looks wrong.
           </s-paragraph>
@@ -211,8 +211,8 @@ export default function History() {
           <s-paragraph>
             This restores{" "}
             <s-text type="strong">{pendingBatch.changeCount}</s-text>{" "}
-            variant(s) to the price/cost they had right before this push, on
-            your live Shopify store.
+            variant(s) to the price/cost/title they had right before this
+            push, on your live Shopify store.
           </s-paragraph>
         )}
         <s-button

@@ -147,8 +147,8 @@ async function requireExistingGoogleContext(
       ok: false,
       response: {
         error:
-          'No sheet yet. Click "Create sheet" first, add New Price / New Cost values in the ' +
-          "Fix tab, then push changes.",
+          'No sheet yet. Click "Create sheet" first, add New Price / New Cost / New Title ' +
+          "values in the Fix tab, then push changes.",
       },
     };
   }
@@ -396,7 +396,7 @@ export default function Dashboard() {
     if (!("preview" in previewFetcher.data)) return;
 
     if (previewFetcher.data.preview.count === 0) {
-      shopify.toast.show("No New Price / New Cost values found in the Fix tab.");
+      shopify.toast.show("No New Price / New Cost / New Title values found in the Fix tab.");
       return;
     }
 
@@ -443,8 +443,10 @@ export default function Dashboard() {
     }
     if (!("result" in applyFetcher.data)) return;
 
-    const { pricesUpdated, costsUpdated } = applyFetcher.data.result;
-    shopify.toast.show(`Updated ${pricesUpdated} price(s) and ${costsUpdated} cost(s) in Shopify.`);
+    const { pricesUpdated, costsUpdated, titlesUpdated } = applyFetcher.data.result;
+    shopify.toast.show(
+      `Updated ${pricesUpdated} price(s), ${costsUpdated} cost(s), and ${titlesUpdated} title(s) in Shopify.`,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyFetcher.data]);
 
@@ -498,8 +500,8 @@ export default function Dashboard() {
           <s-paragraph>
             Margin Tracker writes its diagnostic into a spreadsheet it creates
             in your own Google Drive, and reads back any New Price / New Cost
-            values you type into it. Connect your Google account to turn that
-            on: sync from Shopify still works without it.
+            / New Title values you type into it. Connect your Google account
+            to turn that on: sync from Shopify still works without it.
           </s-paragraph>
           <s-link href={loaderData.connectUrl} target="_top">
             Connect Google
@@ -558,8 +560,9 @@ export default function Dashboard() {
             <s-link href={persistedSheetUrl} target="_blank">
               Open the Google Sheet
             </s-link>{" "}
-            to review the numbers or type New Price / New Cost values in the
-            Fix tab, then come back and click &quot;Push changes&quot;.
+            to review the numbers or type New Price / New Cost / New Title
+            values in the Fix tab, then come back and click &quot;Push
+            changes&quot;.
           </s-paragraph>
         </s-banner>
       )}
@@ -710,7 +713,7 @@ export default function Dashboard() {
           <s-stack direction="block" gap="base">
             <s-paragraph>
               You are about to change{" "}
-              <s-text type="strong">{activePreview.count}</s-text> price(s)/cost(s).
+              <s-text type="strong">{activePreview.count}</s-text> price(s)/cost(s)/title(s).
             </s-paragraph>
             <s-paragraph>
               Biggest increase: +{activePreview.biggestIncreasePct.toFixed(1)}%
@@ -721,6 +724,21 @@ export default function Dashboard() {
                 ? "none"
                 : `${activePreview.biggestDecreasePct.toFixed(1)}%`}
             </s-paragraph>
+            {activePreview.titleChanges.length > 0 && (
+              <s-stack direction="block" gap="small">
+                <s-paragraph>
+                  <s-text type="strong">{activePreview.titleChanges.length}</s-text> title
+                  change(s):
+                </s-paragraph>
+                <s-unordered-list>
+                  {activePreview.titleChanges.map((change) => (
+                    <s-list-item key={change.productId}>
+                      &quot;{change.oldTitle}&quot; -&gt; &quot;{change.newTitle}&quot;
+                    </s-list-item>
+                  ))}
+                </s-unordered-list>
+              </s-stack>
+            )}
             {activePreview.belowCostAfterChange.length > 0 && (
               <s-banner
                 tone="warning"
@@ -774,9 +792,9 @@ export default function Dashboard() {
         <s-stack direction="block" gap="base">
           <s-paragraph>
             Margin Tracker is free to sync, browse the full dashboard, and
-            build your Google Sheet. Pushing New Price / New Cost values back
-            to Shopify needs the paid plan, along with History, Undo, and the
-            weekly email alert.
+            build your Google Sheet. Pushing New Price / New Cost / New Title
+            values back to Shopify needs the paid plan, along with History,
+            Undo, and the weekly email alert.
           </s-paragraph>
           <s-paragraph>
             <s-text type="strong">
