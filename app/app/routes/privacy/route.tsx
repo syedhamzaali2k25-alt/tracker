@@ -89,7 +89,7 @@ export default function Privacy() {
           </p>
         </section>
 
-        <section>
+        <section id="questions">
           <h2>Questions</h2>
           <p>You can reach us through the contact information on our Shopify App Store listing.</p>
         </section>
