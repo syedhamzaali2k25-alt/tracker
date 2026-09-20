@@ -79,7 +79,16 @@ function collapsedColumnGroupRequests(
   const range: sheets_v4.Schema$DimensionRange = { sheetId, dimension: "COLUMNS", startIndex, endIndex };
   return [
     { addDimensionGroup: { range } },
-    { updateDimensionGroup: { dimensionGroup: { range, collapsed: true }, fields: "collapsed" } },
+    // depth must be present and > 0 even though fields only lists
+    // "collapsed" — the API uses (range, depth) together to identify which
+    // group to update. addDimensionGroup above always creates a first-level
+    // group, so depth is always 1 here.
+    {
+      updateDimensionGroup: {
+        dimensionGroup: { range, depth: 1, collapsed: true },
+        fields: "collapsed",
+      },
+    },
   ];
 }
 

@@ -101,6 +101,19 @@ export function buildFixRows(
 }
 
 /**
+ * Gaxios wraps the Sheets API's actual error body (e.g. "Invalid
+ * requests[21].updateDimensionGroup: dimensionGroup.depth must be > 0") in
+ * response.data.error, behind a much larger raw error object — serialized
+ * request bodies, headers, a stack trace. Logging the whole error buries
+ * that one useful line in noise; this pulls it back out.
+ */
+function formattingErrorDetails(error: unknown): unknown {
+  if (!error || typeof error !== "object") return error;
+  const err = error as { response?: { data?: { error?: unknown } }; message?: string };
+  return err.response?.data?.error ?? err.message ?? error;
+}
+
+/**
  * Formatting is cosmetic — a merchant's diagnostic data must still get
  * written even if a formatting request fails (wrong enum value, a
  * transient API error, whatever). Logs and swallows rather than letting a
@@ -111,7 +124,7 @@ async function applyFormattingSafely(label: string, apply: () => Promise<void>):
   try {
     await apply();
   } catch (error) {
-    console.error(`Warning: ${label} formatting failed — continuing without it.`, error);
+    console.error(`Warning: ${label} formatting failed — continuing without it.`, formattingErrorDetails(error));
   }
 }
 

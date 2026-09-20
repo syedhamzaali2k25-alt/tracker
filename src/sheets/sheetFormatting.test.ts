@@ -93,6 +93,10 @@ test("diagnostic: the Shopify ID columns are grouped into a collapsed block", ()
 
   const [update] = find(requests, "updateDimensionGroup");
   assert.equal(update.dimensionGroup?.collapsed, true);
+  // The Sheets API rejects this request without depth > 0 ("dimensionGroup.depth
+  // must be > 0"), even though fields only lists "collapsed" — it's used
+  // together with range to identify which group to update.
+  assert.equal(update.dimensionGroup?.depth, 1);
   assert.equal(update.dimensionGroup?.range?.startIndex, 10);
   assert.equal(update.dimensionGroup?.range?.endIndex, 12);
 });
@@ -210,6 +214,10 @@ test("fix: the Shopify ID columns are grouped into a collapsed block", () => {
 
   const [update] = find(requests, "updateDimensionGroup");
   assert.equal(update.dimensionGroup?.collapsed, true);
+  // The Sheets API rejects this request without depth > 0 ("dimensionGroup.depth
+  // must be > 0"), even though fields only lists "collapsed" — it's used
+  // together with range to identify which group to update.
+  assert.equal(update.dimensionGroup?.depth, 1);
   assert.equal(update.dimensionGroup?.range?.startIndex, 8);
   assert.equal(update.dimensionGroup?.range?.endIndex, 11);
 });
