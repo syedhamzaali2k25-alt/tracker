@@ -51,7 +51,7 @@ test("diagnostic: every range-bearing request targets the given sheetId", () => 
   }
 });
 
-test("diagnostic: header row (index 4) is bolded across all 12 columns", () => {
+test("diagnostic: header row (index 4) is bolded across all 12 columns, with a non-white background", () => {
   const requests = diagnosticFormattingRequests(SHEET_ID, "PKR");
   const bold = repeatCellRequests(requests).find(
     (r) => r.cell?.userEnteredFormat?.textFormat?.bold === true,
@@ -61,12 +61,50 @@ test("diagnostic: header row (index 4) is bolded across all 12 columns", () => {
   assert.equal(bold!.range?.endRowIndex, 5);
   assert.equal(bold!.range?.startColumnIndex, 0);
   assert.equal(bold!.range?.endColumnIndex, 12);
+  const background = bold!.cell?.userEnteredFormat?.backgroundColor;
+  assert.ok(background, "expected the header to have a background color");
+  assert.notDeepEqual(background, { red: 1, green: 1, blue: 1 });
 });
 
-test("diagnostic: frozen row count covers summary rows + header (5 rows)", () => {
+test("diagnostic: frozen row count covers summary rows + header (5 rows), and the Product column is frozen too", () => {
   const requests = diagnosticFormattingRequests(SHEET_ID, "PKR");
   const [freeze] = find(requests, "updateSheetProperties");
   assert.equal(freeze.properties?.gridProperties?.frozenRowCount, 5);
+  assert.equal(freeze.properties?.gridProperties?.frozenColumnCount, 1);
+});
+
+test("diagnostic: Product column and Shopify ID columns get generous explicit widths", () => {
+  const requests = diagnosticFormattingRequests(SHEET_ID, "PKR");
+  const widths = find(requests, "updateDimensionProperties");
+
+  const productWidth = widths.find((w) => w.range?.startIndex === 0)?.properties?.pixelSize;
+  assert.ok(productWidth && productWidth >= 200, "Product column should have real room, not a cramped default");
+
+  const idWidth = widths.find((w) => w.range?.startIndex === 10 && w.range?.endIndex === 12);
+  assert.ok(idWidth, "expected one width request covering both ID columns (10-11)");
+});
+
+test("diagnostic: the Shopify ID columns are grouped into a collapsed block", () => {
+  const requests = diagnosticFormattingRequests(SHEET_ID, "PKR");
+  const [group] = find(requests, "addDimensionGroup");
+  assert.equal(group.range?.startIndex, 10);
+  assert.equal(group.range?.endIndex, 12);
+  assert.equal(group.range?.dimension, "COLUMNS");
+
+  const [update] = find(requests, "updateDimensionGroup");
+  assert.equal(update.dimensionGroup?.collapsed, true);
+  assert.equal(update.dimensionGroup?.range?.startIndex, 10);
+  assert.equal(update.dimensionGroup?.range?.endIndex, 12);
+});
+
+test("diagnostic: light gray table borders span the header and data range", () => {
+  const requests = diagnosticFormattingRequests(SHEET_ID, "PKR");
+  const [grid] = find(requests, "updateBorders");
+  assert.equal(grid.range?.startRowIndex, 4);
+  assert.equal(grid.range?.startColumnIndex, 0);
+  assert.equal(grid.range?.endColumnIndex, 12);
+  assert.ok(grid.innerVertical, "expected inner vertical gridlines");
+  assert.ok(grid.innerHorizontal, "expected inner horizontal gridlines");
 });
 
 test("diagnostic: currency format applies to Cost, Price, Revenue, Profit columns only", () => {
@@ -113,13 +151,82 @@ test("diagnostic: below-cost conditional format references the Margin % column a
   assert.equal(rule.rule?.ranges?.[0].endColumnIndex, 12);
 });
 
+test("diagnostic: below-cost rows are bolded in addition to the existing red background", () => {
+  const requests = diagnosticFormattingRequests(SHEET_ID, "PKR");
+  const [rule] = find(requests, "addConditionalFormatRule");
+  assert.equal(rule.rule?.booleanRule?.format?.backgroundColor?.red, 0.957);
+  assert.equal(rule.rule?.booleanRule?.format?.textFormat?.bold, true);
+});
+
 test("fix: editable background covers exactly New Price, New Cost, and New Title (columns 5-7)", () => {
   const requests = fixFormattingRequests(SHEET_ID);
+  // The header row now also carries a backgroundColor (its own contrast
+  // color, not yellow) — find the yellow one specifically rather than
+  // grabbing whichever repeatCell with a background happens to come first.
   const [background] = repeatCellRequests(requests).filter(
-    (r) => r.cell?.userEnteredFormat?.backgroundColor !== undefined,
+    (r) => r.cell?.userEnteredFormat?.backgroundColor?.red === 1 && r.cell?.userEnteredFormat?.backgroundColor?.green === 0.949,
   );
+  assert.ok(background, "expected a yellow-background repeatCell request");
   assert.equal(background.range?.startColumnIndex, 5);
   assert.equal(background.range?.endColumnIndex, 8);
+});
+
+test("fix: header row is bold with a non-white background, and both the header row and Product column are frozen", () => {
+  const requests = fixFormattingRequests(SHEET_ID);
+  const bold = repeatCellRequests(requests).find((r) => r.cell?.userEnteredFormat?.textFormat?.bold === true);
+  assert.ok(bold, "expected a bold repeatCell request for the Fix tab header");
+  assert.equal(bold!.range?.startRowIndex, 0);
+  assert.equal(bold!.range?.endRowIndex, 1);
+  assert.equal(bold!.range?.startColumnIndex, 0);
+  assert.equal(bold!.range?.endColumnIndex, 11);
+  const background = bold!.cell?.userEnteredFormat?.backgroundColor;
+  assert.ok(background, "expected the header to have a background color");
+  assert.notDeepEqual(background, { red: 1, green: 1, blue: 1 });
+
+  const [freeze] = find(requests, "updateSheetProperties");
+  assert.equal(freeze.properties?.gridProperties?.frozenRowCount, 1);
+  assert.equal(freeze.properties?.gridProperties?.frozenColumnCount, 1);
+});
+
+test("fix: New Title and Product get generous explicit widths, and the ID columns share one width", () => {
+  const requests = fixFormattingRequests(SHEET_ID);
+  const widths = find(requests, "updateDimensionProperties");
+
+  const productWidth = widths.find((w) => w.range?.startIndex === 0)?.properties?.pixelSize;
+  const newTitleWidth = widths.find((w) => w.range?.startIndex === 7)?.properties?.pixelSize;
+  assert.ok(productWidth && productWidth >= 200, "Product column should have real room, not a cramped default");
+  assert.ok(newTitleWidth && newTitleWidth >= 200, "New Title column should have real room for long product names");
+
+  const idWidth = widths.find((w) => w.range?.startIndex === 8 && w.range?.endIndex === 11);
+  assert.ok(idWidth, "expected one width request covering all three ID columns (8-10)");
+});
+
+test("fix: the Shopify ID columns are grouped into a collapsed block", () => {
+  const requests = fixFormattingRequests(SHEET_ID);
+  const [group] = find(requests, "addDimensionGroup");
+  assert.equal(group.range?.startIndex, 8);
+  assert.equal(group.range?.endIndex, 11);
+  assert.equal(group.range?.dimension, "COLUMNS");
+
+  const [update] = find(requests, "updateDimensionGroup");
+  assert.equal(update.dimensionGroup?.collapsed, true);
+  assert.equal(update.dimensionGroup?.range?.startIndex, 8);
+  assert.equal(update.dimensionGroup?.range?.endIndex, 11);
+});
+
+test("fix: table-wide borders are added, plus a heavier separator on both edges of the editable block", () => {
+  const requests = fixFormattingRequests(SHEET_ID);
+  const borders = find(requests, "updateBorders");
+
+  const grid = borders.find((b) => b.range?.startColumnIndex === 0 && b.range?.endColumnIndex === 11);
+  assert.ok(grid, "expected a table-wide grid border request");
+  assert.ok(grid!.innerVertical, "expected inner vertical gridlines");
+  assert.ok(grid!.innerHorizontal, "expected inner horizontal gridlines");
+
+  const leftEdge = borders.find((b) => b.range?.startColumnIndex === 5 && b.range?.endColumnIndex === 6);
+  const rightEdge = borders.find((b) => b.range?.startColumnIndex === 8 && b.range?.endColumnIndex === 9);
+  assert.ok(leftEdge?.left, "expected a separator border on the left edge of New Price (start of editable block)");
+  assert.ok(rightEdge?.left, "expected a separator border on the left edge of Shopify Product ID (end of editable block)");
 });
 
 test("fix: protected range covers exactly the three ID columns (8-10) and is warning-only", () => {

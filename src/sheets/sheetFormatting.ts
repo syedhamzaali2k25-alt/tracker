@@ -8,6 +8,20 @@ const MAX_ROW = 10000;
 
 const LIGHT_RED = { red: 0.957, green: 0.8, blue: 0.8 };
 const LIGHT_YELLOW = { red: 1, green: 0.949, blue: 0.8 };
+// A muted blue-gray, not pure white, so the header row reads as a header
+// even before its bold text registers.
+const HEADER_BACKGROUND = { red: 0.851, green: 0.882, blue: 0.949 };
+const GRID_BORDER: sheets_v4.Schema$Border = {
+  style: "SOLID",
+  color: { red: 0.8, green: 0.8, blue: 0.8 },
+};
+// A visibly heavier border than the light grid lines, used only at block
+// boundaries (e.g. read-only vs editable columns) so it stands out from the
+// rest of the table grid.
+const SEPARATOR_BORDER: sheets_v4.Schema$Border = {
+  style: "SOLID_MEDIUM",
+  color: { red: 0.45, green: 0.45, blue: 0.45 },
+};
 
 const METADATA_KEY = "marginTrackerFormatVersion";
 // DeveloperMetadataLocationMatchingStrategy's real accepted values are
@@ -27,13 +41,90 @@ export const EXACT_LOCATION = "EXACT_LOCATION";
  * number format). Sheets whose stored version already matches are skipped
  * — see ensureFormatted.
  */
-const DIAGNOSTIC_FORMAT_VERSION = "diagnostic-v1";
-const FIX_FORMAT_VERSION = "fix-v2";
+const DIAGNOSTIC_FORMAT_VERSION = "diagnostic-v2";
+const FIX_FORMAT_VERSION = "fix-v3";
 
 function columnLetter(index: number): string {
   // Only ever called with this project's own small, fixed column indices
   // (well under 26) — no need for the general base-26 case.
   return String.fromCharCode(65 + index);
+}
+
+function columnWidthRequest(
+  sheetId: number,
+  startIndex: number,
+  endIndex: number,
+  pixelSize: number,
+): sheets_v4.Schema$Request {
+  return {
+    updateDimensionProperties: {
+      range: { sheetId, dimension: "COLUMNS", startIndex, endIndex },
+      properties: { pixelSize },
+      fields: "pixelSize",
+    },
+  };
+}
+
+/**
+ * Tucks a range of columns (the raw Shopify ID columns) behind a
+ * collapsible [+] group, hidden by default — merchants can still expand it,
+ * and the app reads/writes those columns the same either way, since this
+ * only changes the sheet's default visual state.
+ */
+function collapsedColumnGroupRequests(
+  sheetId: number,
+  startIndex: number,
+  endIndex: number,
+): sheets_v4.Schema$Request[] {
+  const range: sheets_v4.Schema$DimensionRange = { sheetId, dimension: "COLUMNS", startIndex, endIndex };
+  return [
+    { addDimensionGroup: { range } },
+    { updateDimensionGroup: { dimensionGroup: { range, collapsed: true }, fields: "collapsed" } },
+  ];
+}
+
+/** Light gray gridlines across a table's full range, so it reads as a table rather than a wall of text. */
+function tableGridBordersRequest(
+  sheetId: number,
+  startRowIndex: number,
+  endColumnIndex: number,
+): sheets_v4.Schema$Request {
+  return {
+    updateBorders: {
+      range: { sheetId, startRowIndex, endRowIndex: MAX_ROW, startColumnIndex: 0, endColumnIndex },
+      top: GRID_BORDER,
+      bottom: GRID_BORDER,
+      left: GRID_BORDER,
+      right: GRID_BORDER,
+      innerHorizontal: GRID_BORDER,
+      innerVertical: GRID_BORDER,
+    },
+  };
+}
+
+/**
+ * A heavier left border on one column, marking a block boundary (e.g.
+ * read-only vs editable columns). Callers send this after
+ * tableGridBordersRequest so it wins at that column's edge instead of being
+ * overwritten by the lighter table-wide grid.
+ */
+function columnSeparatorRequest(
+  sheetId: number,
+  columnIndex: number,
+  startRowIndex: number,
+): sheets_v4.Schema$Request {
+  return {
+    updateBorders: {
+      range: {
+        sheetId,
+        startRowIndex,
+        endRowIndex: MAX_ROW,
+        startColumnIndex: columnIndex,
+        endColumnIndex: columnIndex + 1,
+      },
+      left: SEPARATOR_BORDER,
+    },
+  };
 }
 
 async function getAppliedFormatVersion(
@@ -140,6 +231,20 @@ const DIAGNOSTIC_COLUMNS = {
   variantId: 11,
 } as const;
 const DIAGNOSTIC_COLUMN_COUNT = 12;
+// productId/variantId are sized separately below (they share one width, and
+// are also grouped into a collapsed block).
+const DIAGNOSTIC_COLUMN_WIDTHS: [number, number][] = [
+  [DIAGNOSTIC_COLUMNS.product, 240],
+  [DIAGNOSTIC_COLUMNS.variant, 160],
+  [DIAGNOSTIC_COLUMNS.sku, 110],
+  [DIAGNOSTIC_COLUMNS.cost, 100],
+  [DIAGNOSTIC_COLUMNS.price, 100],
+  [DIAGNOSTIC_COLUMNS.marginPct, 100],
+  [DIAGNOSTIC_COLUMNS.sold30d, 100],
+  [DIAGNOSTIC_COLUMNS.revenue30d, 130],
+  [DIAGNOSTIC_COLUMNS.profit30d, 130],
+  [DIAGNOSTIC_COLUMNS.flag, 150],
+];
 
 /** Exported for testing — see sheetFormatting.test.ts. Not meant to be called directly by anything else. */
 export function diagnosticFormattingRequests(
@@ -170,14 +275,17 @@ export function diagnosticFormattingRequests(
           startColumnIndex: 0,
           endColumnIndex: DIAGNOSTIC_COLUMN_COUNT,
         },
-        cell: { userEnteredFormat: { textFormat: { bold: true } } },
-        fields: "userEnteredFormat.textFormat.bold",
+        cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: HEADER_BACKGROUND } },
+        fields: "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor",
       },
     },
     {
       updateSheetProperties: {
-        properties: { sheetId, gridProperties: { frozenRowCount: DIAGNOSTIC_DATA_START_ROW } },
-        fields: "gridProperties.frozenRowCount",
+        properties: {
+          sheetId,
+          gridProperties: { frozenRowCount: DIAGNOSTIC_DATA_START_ROW, frozenColumnCount: 1 },
+        },
+        fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
       },
     },
     ...currencyColumns.map(
@@ -208,27 +316,14 @@ export function diagnosticFormattingRequests(
         fields: "userEnteredFormat.numberFormat",
       },
     },
-    {
-      updateDimensionProperties: {
-        range: { sheetId, dimension: "COLUMNS", startIndex: DIAGNOSTIC_COLUMNS.product, endIndex: DIAGNOSTIC_COLUMNS.product + 1 },
-        properties: { pixelSize: 240 },
-        fields: "pixelSize",
-      },
-    },
-    {
-      updateDimensionProperties: {
-        range: { sheetId, dimension: "COLUMNS", startIndex: DIAGNOSTIC_COLUMNS.variant, endIndex: DIAGNOSTIC_COLUMNS.variant + 1 },
-        properties: { pixelSize: 160 },
-        fields: "pixelSize",
-      },
-    },
-    {
-      updateDimensionProperties: {
-        range: { sheetId, dimension: "COLUMNS", startIndex: DIAGNOSTIC_COLUMNS.productId, endIndex: DIAGNOSTIC_COLUMNS.variantId + 1 },
-        properties: { pixelSize: 220 },
-        fields: "pixelSize",
-      },
-    },
+    // Sized generously for realistic content (long product titles, full
+    // Shopify gids) rather than auto-resize, which has nothing to measure
+    // against — this runs before the data write below ever populates the
+    // sheet (see writeDiagnostic in diagnosticSheet.ts).
+    ...DIAGNOSTIC_COLUMN_WIDTHS.map(([columnIndex, pixelSize]) =>
+      columnWidthRequest(sheetId, columnIndex, columnIndex + 1, pixelSize),
+    ),
+    columnWidthRequest(sheetId, DIAGNOSTIC_COLUMNS.productId, DIAGNOSTIC_COLUMNS.variantId + 1, 240),
     // Below-cost rows get a light red background. A conditional format
     // rule, not per-row cell formatting, so it stays correct as data
     // changes on every future sync without ever needing to be reapplied.
@@ -253,12 +348,17 @@ export function diagnosticFormattingRequests(
                 },
               ],
             },
-            format: { backgroundColor: LIGHT_RED },
+            // Bold on top of the existing red background — additive, so a
+            // below-cost row is unmistakable even at a glance, not just on
+            // close reading of the background color.
+            format: { backgroundColor: LIGHT_RED, textFormat: { bold: true } },
           },
         },
         index: 0,
       },
     },
+    tableGridBordersRequest(sheetId, DIAGNOSTIC_HEADER_ROW, DIAGNOSTIC_COLUMN_COUNT),
+    ...collapsedColumnGroupRequests(sheetId, DIAGNOSTIC_COLUMNS.productId, DIAGNOSTIC_COLUMNS.variantId + 1),
   ];
 }
 
@@ -276,6 +376,9 @@ export async function ensureDiagnosticFormatting(
 // matches FIX_HEADER exactly.
 const FIX_DATA_START_ROW = 1;
 const FIX_COLUMNS = {
+  product: 0,
+  variant: 1,
+  sku: 2,
   currentPrice: 3,
   currentCost: 4,
   newPrice: 5,
@@ -285,6 +388,21 @@ const FIX_COLUMNS = {
   variantId: 9,
   inventoryItemId: 10,
 } as const;
+const FIX_COLUMN_COUNT = 11;
+// productId/variantId/inventoryItemId are sized separately below (they
+// share one width, and are also grouped into a collapsed block).
+const FIX_COLUMN_WIDTHS: [number, number][] = [
+  [FIX_COLUMNS.product, 240],
+  [FIX_COLUMNS.variant, 160],
+  [FIX_COLUMNS.sku, 110],
+  [FIX_COLUMNS.currentPrice, 100],
+  [FIX_COLUMNS.currentCost, 100],
+  [FIX_COLUMNS.newPrice, 100],
+  [FIX_COLUMNS.newCost, 100],
+  // Product-name-length text can land here too, so it gets the same room
+  // as the Product column itself.
+  [FIX_COLUMNS.newTitle, 240],
+];
 
 /** Exported for testing — see sheetFormatting.test.ts. Not meant to be called directly by anything else. */
 export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request[] {
@@ -293,6 +411,34 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
   const anchorRow = FIX_DATA_START_ROW + 1; // 1-indexed for formulas
 
   return [
+    {
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: FIX_DATA_START_ROW,
+          startColumnIndex: 0,
+          endColumnIndex: FIX_COLUMN_COUNT,
+        },
+        cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: HEADER_BACKGROUND } },
+        fields: "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor",
+      },
+    },
+    {
+      updateSheetProperties: {
+        properties: {
+          sheetId,
+          gridProperties: { frozenRowCount: FIX_DATA_START_ROW, frozenColumnCount: 1 },
+        },
+        fields: "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+      },
+    },
+    // Sized generously for realistic content (long product titles, full
+    // Shopify gids) rather than auto-resize, which has nothing to measure
+    // against — this runs before the data write below ever populates the
+    // sheet (see writeDiagnostic in diagnosticSheet.ts).
+    ...FIX_COLUMN_WIDTHS.map(([columnIndex, pixelSize]) => columnWidthRequest(sheetId, columnIndex, columnIndex + 1, pixelSize)),
+    columnWidthRequest(sheetId, FIX_COLUMNS.productId, FIX_COLUMNS.inventoryItemId + 1, 240),
     // New Price / New Cost / New Title get a distinct background so it's
     // obvious where a merchant is meant to type.
     {
@@ -389,6 +535,13 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
         index: 0,
       },
     },
+    tableGridBordersRequest(sheetId, 0, FIX_COLUMN_COUNT),
+    // Heavier borders on both edges of the yellow editable block, so it
+    // reads as its own section rather than blending into the read-only
+    // columns on either side of it.
+    columnSeparatorRequest(sheetId, FIX_COLUMNS.newPrice, 0),
+    columnSeparatorRequest(sheetId, FIX_COLUMNS.productId, 0),
+    ...collapsedColumnGroupRequests(sheetId, FIX_COLUMNS.productId, FIX_COLUMNS.inventoryItemId + 1),
   ];
 }
 
