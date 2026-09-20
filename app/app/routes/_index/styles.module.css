@@ -144,11 +144,11 @@
    .topbar's min-height (which stays fixed via overflow: visible) instead
    of stretching the bar taller as the logo grows. */
 .logoMarkWrap {
-  height: 3.25rem;
+  height: 5rem;
   width: auto;
   flex: none;
   object-fit: contain;
-  margin: -0.5rem 0;
+  margin: -1.375rem 0;
 }
 
 .navLinks {
@@ -1041,9 +1041,9 @@
 }
 
 .footerBrand .logoMarkWrap {
-  height: 2.75rem;
+  height: 4rem;
   width: auto;
-  margin: -0.3rem 0;
+  margin: -1.25rem 0;
 }
 
 .footerLinks {
