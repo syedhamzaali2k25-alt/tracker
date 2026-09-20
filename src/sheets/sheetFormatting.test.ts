@@ -6,6 +6,7 @@ import {
   EXACT_LOCATION,
   fixFormattingRequests,
   setFormatVersionRequest,
+  staleProtectedRangeDeleteRequests,
 } from "./sheetFormatting.js";
 
 const SHEET_ID = 4242;
@@ -266,6 +267,50 @@ test("fix: below-cost conditional format targets only New Price and compares it 
   assert.match(formula, /\$F2/); // New Price, row 2 (1-indexed, first data row)
   assert.match(formula, /\$E2/); // Current Cost
   assert.match(formula, /\$F2<\$E2/);
+});
+
+test("fix: Current Price already below Current Cost bolds+reds the whole row, matching the Diagnostic tab", () => {
+  const requests = fixFormattingRequests(SHEET_ID);
+  const rules = find(requests, "addConditionalFormatRule");
+  assert.equal(rules.length, 2, "expected both the New-Price rule and the whole-row Current Price rule");
+  const rowRule = rules[1];
+  assert.equal(rowRule.rule?.ranges?.[0].startColumnIndex, 0);
+  assert.equal(rowRule.rule?.ranges?.[0].endColumnIndex, 11);
+  const formula = rowRule.rule?.booleanRule?.condition?.values?.[0].userEnteredValue ?? "";
+  assert.match(formula, /\$D2/); // Current Price, row 2 (1-indexed, first data row)
+  assert.match(formula, /\$E2/); // Current Cost
+  assert.match(formula, /\$D2<\$E2/);
+  assert.equal(rowRule.rule?.booleanRule?.format?.backgroundColor?.red, 0.957);
+  assert.equal(rowRule.rule?.booleanRule?.format?.textFormat?.bold, true);
+});
+
+test("staleProtectedRangeDeleteRequests: matches only ranges with the exact description, ignoring a merchant's own protections", () => {
+  const description = "Shopify IDs, used to match this row back to the right variant. Edit with care.";
+  const existing: sheets_v4.Schema$ProtectedRange[] = [
+    { protectedRangeId: 111, description },
+    { protectedRangeId: 222, description: "Don't touch — my own formula range" },
+    { protectedRangeId: 333, description },
+  ];
+
+  const requests = staleProtectedRangeDeleteRequests(existing, description);
+
+  assert.deepEqual(
+    requests.map((r) => r.deleteProtectedRange?.protectedRangeId),
+    [111, 333],
+  );
+});
+
+test("staleProtectedRangeDeleteRequests: skips a matching range with no protectedRangeId", () => {
+  const description = "Shopify IDs, used to match this row back to the right variant. Edit with care.";
+  const existing: sheets_v4.Schema$ProtectedRange[] = [{ description }];
+
+  const requests = staleProtectedRangeDeleteRequests(existing, description);
+
+  assert.equal(requests.length, 0);
+});
+
+test("staleProtectedRangeDeleteRequests: an empty existing list produces no delete requests", () => {
+  assert.equal(staleProtectedRangeDeleteRequests([], "anything").length, 0);
 });
 
 test("EXACT_LOCATION is a value the Sheets API actually accepts for locationMatchingStrategy", () => {

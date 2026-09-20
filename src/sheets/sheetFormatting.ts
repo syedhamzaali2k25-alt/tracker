@@ -42,7 +42,7 @@ export const EXACT_LOCATION = "EXACT_LOCATION";
  * — see ensureFormatted.
  */
 const DIAGNOSTIC_FORMAT_VERSION = "diagnostic-v2";
-const FIX_FORMAT_VERSION = "fix-v3";
+const FIX_FORMAT_VERSION = "fix-v4";
 
 function columnLetter(index: number): string {
   // Only ever called with this project's own small, fixed column indices
@@ -136,6 +136,41 @@ function columnSeparatorRequest(
   };
 }
 
+/**
+ * A protected range can only be deleted by the numeric protectedRangeId
+ * Google assigned it when it was created — not by its range or description
+ * — so this is how a stale one (left behind when a format version bump
+ * moves the columns it used to cover) gets found again. Matches by
+ * description rather than by range/column position, specifically so this
+ * can never delete a protection a merchant added themselves: only ranges
+ * whose description exactly matches the one this app always sets are
+ * touched. Exported for testing — see sheetFormatting.test.ts.
+ */
+export function staleProtectedRangeDeleteRequests(
+  existing: sheets_v4.Schema$ProtectedRange[],
+  description: string,
+): sheets_v4.Schema$Request[] {
+  return existing
+    .filter((range) => range.description === description && range.protectedRangeId != null)
+    .map((range): sheets_v4.Schema$Request => ({
+      deleteProtectedRange: { protectedRangeId: range.protectedRangeId! },
+    }));
+}
+
+async function removeStaleProtectedRangeRequests(
+  ctx: GoogleContext,
+  sheetId: number,
+  description: string,
+): Promise<sheets_v4.Schema$Request[]> {
+  const sheets = getSheetsClient(ctx.auth);
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId: ctx.spreadsheetId,
+    fields: "sheets(properties.sheetId,protectedRanges)",
+  });
+  const sheet = response.data.sheets?.find((s) => s.properties?.sheetId === sheetId);
+  return staleProtectedRangeDeleteRequests(sheet?.protectedRanges ?? [], description);
+}
+
 async function getAppliedFormatVersion(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
@@ -207,13 +242,13 @@ async function ensureFormatted(
   ctx: GoogleContext,
   sheetId: number,
   version: string,
-  buildRequests: () => sheets_v4.Schema$Request[],
+  buildRequests: () => sheets_v4.Schema$Request[] | Promise<sheets_v4.Schema$Request[]>,
 ): Promise<void> {
   const sheets = getSheetsClient(ctx.auth);
   const applied = await getAppliedFormatVersion(sheets, ctx.spreadsheetId, sheetId);
   if (applied === version) return;
 
-  const requests = [...buildRequests(), setFormatVersionRequest(sheetId, version, applied)];
+  const requests = [...(await buildRequests()), setFormatVersionRequest(sheetId, version, applied)];
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: ctx.spreadsheetId,
     requestBody: { requests },
@@ -371,6 +406,11 @@ export function diagnosticFormattingRequests(
   ];
 }
 
+// The Diagnostic tab doesn't add any protected range today, so there's
+// nothing to clean up here — but if one is ever added, give it its own
+// description constant and route it through removeStaleProtectedRangeRequests
+// the same way ensureFixFormatting does below, rather than assuming a
+// future column shift can't leave the same kind of stale range behind.
 export async function ensureDiagnosticFormatting(
   ctx: GoogleContext,
   sheetId: number,
@@ -398,6 +438,12 @@ const FIX_COLUMNS = {
   inventoryItemId: 10,
 } as const;
 const FIX_COLUMN_COUNT = 11;
+// Shared between the addProtectedRange request below and
+// ensureFixFormatting's stale-protection cleanup, so the two can never
+// drift out of sync with each other — the cleanup step matches existing
+// protected ranges by this exact text.
+const FIX_ID_PROTECTION_DESCRIPTION =
+  "Shopify IDs, used to match this row back to the right variant. Edit with care.";
 // productId/variantId/inventoryItemId are sized separately below (they
 // share one width, and are also grouped into a collapsed block).
 const FIX_COLUMN_WIDTHS: [number, number][] = [
@@ -415,6 +461,7 @@ const FIX_COLUMN_WIDTHS: [number, number][] = [
 
 /** Exported for testing — see sheetFormatting.test.ts. Not meant to be called directly by anything else. */
 export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request[] {
+  const currentPriceLetter = columnLetter(FIX_COLUMNS.currentPrice);
   const newPriceLetter = columnLetter(FIX_COLUMNS.newPrice);
   const currentCostLetter = columnLetter(FIX_COLUMNS.currentCost);
   const anchorRow = FIX_DATA_START_ROW + 1; // 1-indexed for formulas
@@ -485,7 +532,7 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
             startColumnIndex: FIX_COLUMNS.productId,
             endColumnIndex: FIX_COLUMNS.inventoryItemId + 1,
           },
-          description: "Shopify IDs, used to match this row back to the right variant. Edit with care.",
+          description: FIX_ID_PROTECTION_DESCRIPTION,
           warningOnly: true,
         },
       },
@@ -544,6 +591,42 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
         index: 0,
       },
     },
+    // Current Price already below Current Cost -> the whole row goes bold
+    // red, the same treatment the Diagnostic tab already gives a below-cost
+    // row, so a merchant editing straight from this tab notices a product
+    // is already selling at a loss before they even touch New Price. Added
+    // after the New-Price-specific rule above, so on a row where both
+    // conditions are true this one — index 0, topmost — wins and the row
+    // reads as bold rather than just plain red.
+    {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [
+            {
+              sheetId,
+              startRowIndex: FIX_DATA_START_ROW,
+              endRowIndex: MAX_ROW,
+              startColumnIndex: 0,
+              endColumnIndex: FIX_COLUMN_COUNT,
+            },
+          ],
+          booleanRule: {
+            condition: {
+              type: "CUSTOM_FORMULA",
+              values: [
+                {
+                  userEnteredValue:
+                    `=AND(ISNUMBER($${currentPriceLetter}${anchorRow}), ISNUMBER($${currentCostLetter}${anchorRow}), ` +
+                    `$${currentPriceLetter}${anchorRow}<$${currentCostLetter}${anchorRow})`,
+                },
+              ],
+            },
+            format: { backgroundColor: LIGHT_RED, textFormat: { bold: true } },
+          },
+        },
+        index: 0,
+      },
+    },
     tableGridBordersRequest(sheetId, 0, FIX_COLUMN_COUNT),
     // Heavier borders on both edges of the yellow editable block, so it
     // reads as its own section rather than blending into the read-only
@@ -555,5 +638,19 @@ export function fixFormattingRequests(sheetId: number): sheets_v4.Schema$Request
 }
 
 export async function ensureFixFormatting(ctx: GoogleContext, sheetId: number): Promise<void> {
-  await ensureFormatted(ctx, sheetId, FIX_FORMAT_VERSION, () => fixFormattingRequests(sheetId));
+  await ensureFormatted(ctx, sheetId, FIX_FORMAT_VERSION, async () => {
+    // A previous format version's addProtectedRange (built with that
+    // version's column indices) is never automatically removed when the
+    // columns it covered shift — e.g. adding New Title moved the ID
+    // columns from 7-9 to 8-10, leaving a stale protection sitting on New
+    // Title and the wrong ID column on any sheet formatted before that
+    // change. Delete anything matching this app's own description before
+    // adding the fresh one at today's indices, every time this runs.
+    const deleteStaleProtections = await removeStaleProtectedRangeRequests(
+      ctx,
+      sheetId,
+      FIX_ID_PROTECTION_DESCRIPTION,
+    );
+    return [...deleteStaleProtections, ...fixFormattingRequests(sheetId)];
+  });
 }
