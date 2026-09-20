@@ -386,9 +386,8 @@ export default function App() {
   return (
     <div className={styles.page} ref={revealRef}>
       <header className={styles.topbar}>
-        <Link to="/" className={styles.logo}>
+        <Link to="/" className={styles.logo} aria-label="Margin Tracker">
           <span className={styles.logoMarkWrap} aria-hidden="true" />
-          <span className={styles.wordmark}>Margin Tracker</span>
         </Link>
         <nav className={styles.navLinks} aria-label="Page sections">
           <a href="#features">Features</a>

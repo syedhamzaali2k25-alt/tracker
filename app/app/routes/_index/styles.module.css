@@ -133,22 +133,24 @@
   margin-right: auto;
 }
 
-/* logo-mark.webp is a pin-shaped badge icon with a full "MARGIN TRACKER"
-   wordmark stacked underneath it, meant for large sizes. At nav size that
-   whole thing (plus this separate text wordmark right next to it) reads
-   as illegible, over-detailed mush. A background-image crop (rather than
-   an <img> with object-fit, which has zero vertical slack to crop into
-   once the asset's own aspect ratio is forced into a square box) shows
-   only the badge icon, scaled evenly, with the built-in wordmark cropped
-   out entirely rather than surviving as an illegible sliver. */
+/* app/public/logo.svg is the real brand mark: a bar-chart + checkmark +
+   upward-arrow icon on a black square canvas, with a full "MARGIN
+   TRACKER" wordmark stacked underneath it, meant for large sizes. At nav
+   size that whole thing reads as illegible, over-detailed mush. A
+   background-image crop (rather than an <img> with object-fit, which has
+   zero vertical slack to crop into once the asset's own aspect ratio is
+   forced into a square box) shows only the icon, scaled evenly, with the
+   built-in wordmark cropped out entirely. Crop coordinates were measured
+   precisely against this exact file (in-browser canvas pixel readback),
+   not eyeballed. */
 .logoMarkWrap {
-  width: 2.1rem;
-  height: 2.1rem;
+  width: 2.5rem;
+  height: 2.5rem;
   border-radius: 9px;
   overflow: hidden;
   flex: none;
   background-color: #fff;
-  background-image: url("/logo-mark.webp");
+  background-image: url("/logo.svg");
   background-repeat: no-repeat;
   background-size: 333% auto;
   background-position: 50% 34%;
