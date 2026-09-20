@@ -133,25 +133,25 @@
   margin-right: auto;
 }
 
-/* The full logo.svg lockup is a square canvas with the icon mark on top
-   and a full spelled-out wordmark underneath it, meant for large sizes.
-   At nav size that whole thing (plus this separate text wordmark right
-   next to it) reads as illegible, over-detailed mush. A background-image
-   crop (rather than an <img> with object-fit, which has zero vertical
-   slack to crop into on this 4:3 asset scaled to a 1:1 box) shows only
-   the icon glyph, scaled evenly, with the wordmark portion cropped out
-   entirely rather than surviving as an illegible sliver. */
+/* logo-mark.webp is a pin-shaped badge icon with a full "MARGIN TRACKER"
+   wordmark stacked underneath it, meant for large sizes. At nav size that
+   whole thing (plus this separate text wordmark right next to it) reads
+   as illegible, over-detailed mush. A background-image crop (rather than
+   an <img> with object-fit, which has zero vertical slack to crop into
+   once the asset's own aspect ratio is forced into a square box) shows
+   only the badge icon, scaled evenly, with the built-in wordmark cropped
+   out entirely rather than surviving as an illegible sliver. */
 .logoMarkWrap {
   width: 2.1rem;
   height: 2.1rem;
   border-radius: 9px;
   overflow: hidden;
   flex: none;
-  background-color: var(--ink-950);
-  background-image: url("/logo.svg");
+  background-color: #fff;
+  background-image: url("/logo-mark.webp");
   background-repeat: no-repeat;
-  background-size: 470% auto;
-  background-position: 51% 38%;
+  background-size: 333% auto;
+  background-position: 50% 34%;
 }
 
 .wordmark {
