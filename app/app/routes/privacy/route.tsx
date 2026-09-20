@@ -6,7 +6,7 @@ export default function Privacy() {
     <div className={styles.page}>
       <header className={styles.topbar}>
         <Link to="/" className={styles.logo}>
-          <img src="/logo.svg" alt="" className={styles.logoMark} />
+          <img src="/logo.png" alt="" className={styles.logoMark} />
           <span className={styles.wordmark}>Margin Tracker</span>
         </Link>
         <Link to="/" className={styles.topbarLink}>

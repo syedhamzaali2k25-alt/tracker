@@ -133,10 +133,11 @@
   margin-right: auto;
 }
 
-/* /logo-icon.svg is a standalone icon-only asset (no wordmark baked in,
-   already cropped) — plain <img>, no background-image crop needed.
-   object-fit: contain guards against distortion if it isn't perfectly
-   square, without assuming anything about its exact proportions. */
+/* /favicon.png is the official standalone icon-only asset (no wordmark
+   baked in, already cropped) — plain <img>, no background-image crop
+   needed. object-fit: contain guards against distortion if it isn't
+   perfectly square, without assuming anything about its exact
+   proportions. */
 .logoMarkWrap {
   width: 2.5rem;
   height: 2.5rem;

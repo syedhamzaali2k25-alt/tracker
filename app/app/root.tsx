@@ -19,9 +19,12 @@ export default function App() {
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
         />
-        {/* app/public/logo.svg — see the landing page header for the same file. */}
-        <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-        <link rel="alternate icon" href="/favicon.ico" />
+        {/* app/public/favicon.png — the official icon-only brand mark, also
+            used in the landing page header/footer. favicon.ico (the old
+            placeholder-era asset) is dropped rather than kept as a
+            fallback, since it no longer matches this icon and every
+            browser that matters supports a PNG favicon directly. */}
+        <link rel="icon" type="image/png" href="/favicon.png" />
         <Meta />
         <Links />
       </head>
