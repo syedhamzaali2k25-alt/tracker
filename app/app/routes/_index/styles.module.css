@@ -140,7 +140,7 @@
    on top of that. No border-radius/overflow clipping: nothing here
    should crop it. */
 .logoMarkWrap {
-  height: 2.25rem;
+  height: 3.5rem;
   width: auto;
   flex: none;
   object-fit: contain;
@@ -1031,6 +1031,11 @@
   align-items: center;
   gap: 0.5rem;
   margin-right: auto;
+}
+
+.footerBrand .logoMarkWrap {
+  height: 2.5rem;
+  width: auto;
 }
 
 .footerLinks {
