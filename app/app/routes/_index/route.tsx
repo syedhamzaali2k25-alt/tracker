@@ -386,8 +386,8 @@ export default function App() {
   return (
     <div className={styles.page} ref={revealRef}>
       <header className={styles.topbar}>
-        <Link to="/" className={styles.logo} aria-label="Margin Tracker">
-          <span className={styles.logoMarkWrap} aria-hidden="true" />
+        <Link to="/" className={styles.logo}>
+          <img src="/logo-icon.svg" alt="Margin Tracker" className={styles.logoMarkWrap} />
         </Link>
         <nav className={styles.navLinks} aria-label="Page sections">
           <a href="#features">Features</a>
@@ -564,7 +564,7 @@ export default function App() {
 
       <footer className={styles.footer}>
         <div className={styles.footerBrand}>
-          <span className={styles.logoMarkWrap} aria-hidden="true" />
+          <img src="/logo-icon.svg" alt="" className={styles.logoMarkWrap} />
           <span className={styles.wordmark}>Margin Tracker</span>
         </div>
         <div className={styles.footerLinks}>

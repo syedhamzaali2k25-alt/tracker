@@ -133,27 +133,15 @@
   margin-right: auto;
 }
 
-/* app/public/logo.svg is the real brand mark: a bar-chart + checkmark +
-   upward-arrow icon on a black square canvas, with a full "MARGIN
-   TRACKER" wordmark stacked underneath it, meant for large sizes. At nav
-   size that whole thing reads as illegible, over-detailed mush. A
-   background-image crop (rather than an <img> with object-fit, which has
-   zero vertical slack to crop into once the asset's own aspect ratio is
-   forced into a square box) shows only the icon, scaled evenly, with the
-   built-in wordmark cropped out entirely. Crop coordinates were measured
-   precisely against this exact file (in-browser canvas pixel readback),
-   not eyeballed. */
+/* /logo-icon.svg is a standalone icon-only asset (no wordmark baked in,
+   already cropped) — plain <img>, no background-image crop needed.
+   object-fit: contain guards against distortion if it isn't perfectly
+   square, without assuming anything about its exact proportions. */
 .logoMarkWrap {
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: 9px;
-  overflow: hidden;
   flex: none;
-  background-color: #fff;
-  background-image: url("/logo.svg");
-  background-repeat: no-repeat;
-  background-size: 333% auto;
-  background-position: 50% 34%;
+  object-fit: contain;
 }
 
 .wordmark {
@@ -1054,7 +1042,6 @@
 .footerBrand .logoMarkWrap {
   width: 1.6rem;
   height: 1.6rem;
-  border-radius: 7px;
 }
 
 .footerBrand .wordmark {
