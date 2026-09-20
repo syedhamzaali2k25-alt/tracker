@@ -133,24 +133,17 @@
   margin-right: auto;
 }
 
-/* /favicon.png is the official standalone icon-only asset (no wordmark
-   baked in, already cropped) — plain <img>, no background-image crop
-   needed. object-fit: contain guards against distortion if it isn't
-   perfectly square, without assuming anything about its exact
-   proportions. */
+/* /logo.png is the full icon + "MARGIN TRACKER" wordmark lockup, not a
+   square icon — height-only sizing (width: auto) keeps its natural
+   proportions instead of squeezing or cropping it into a square/circle.
+   object-fit: contain is a second layer of protection against distortion
+   on top of that. No border-radius/overflow clipping: nothing here
+   should crop it. */
 .logoMarkWrap {
-  width: 2.5rem;
-  height: 2.5rem;
+  height: 2.25rem;
+  width: auto;
   flex: none;
   object-fit: contain;
-}
-
-.wordmark {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 1.05rem;
-  letter-spacing: -0.01em;
-  color: var(--ink-950);
 }
 
 .navLinks {
@@ -1038,15 +1031,6 @@
   align-items: center;
   gap: 0.5rem;
   margin-right: auto;
-}
-
-.footerBrand .logoMarkWrap {
-  width: 1.6rem;
-  height: 1.6rem;
-}
-
-.footerBrand .wordmark {
-  font-size: 0.9rem;
 }
 
 .footerLinks {
