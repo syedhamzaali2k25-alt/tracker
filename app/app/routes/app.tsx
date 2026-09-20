@@ -6,6 +6,7 @@ import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  console.log(`[app.tsx loader] ${request.method} ${request.url}`);
   await authenticate.admin(request);
 
   // eslint-disable-next-line no-undef

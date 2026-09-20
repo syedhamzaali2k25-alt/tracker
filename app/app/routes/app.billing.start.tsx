@@ -2,9 +2,21 @@ import type { LoaderFunctionArgs } from "react-router";
 import { authenticate, BILLING_IS_TEST } from "../shopify.server";
 import { SUBSCRIPTION_PLAN } from "../billing-plan";
 
-function billingReturnUrl(shop: string): string {
+/**
+ * Carries `host` through to the callback, not just `shop`. Without it,
+ * app.billing.callback.tsx's own redirect back into `/app` has only `shop`
+ * to go on, and authenticate.admin() then has to fall back to rendering a
+ * bare App Bridge bootstrap page and trusting its client-side JS to work
+ * out where to redirect — an extra, harder-to-verify hop. Passing `host`
+ * the whole way through means every hop in the return trip is a plain
+ * server-side redirect with everything authenticate.admin() needs already
+ * on the URL, the same as a normal embedded page load.
+ */
+function billingReturnUrl(shop: string, host: string | null): string {
   const appUrl = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
-  return `${appUrl}/app/billing/callback?shop=${encodeURIComponent(shop)}`;
+  const params = new URLSearchParams({ shop });
+  if (host) params.set("host", host);
+  return `${appUrl}/app/billing/callback?${params.toString()}`;
 }
 
 /**
@@ -19,10 +31,14 @@ function billingReturnUrl(shop: string): string {
  * where the merchant approves or declines the charge.
  */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  console.log(`[app.billing.start loader] ${request.method} ${request.url}`);
   const { session, billing } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const returnUrl = billingReturnUrl(session.shop, url.searchParams.get("host"));
+  console.log(`[app.billing.start loader] shop=${session.shop} returnUrl=${returnUrl}`);
   await billing.request({
     plan: SUBSCRIPTION_PLAN,
     isTest: BILLING_IS_TEST,
-    returnUrl: billingReturnUrl(session.shop),
+    returnUrl,
   });
 };
