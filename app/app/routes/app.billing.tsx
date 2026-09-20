@@ -8,7 +8,7 @@ import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { SUBSCRIPTION_PLAN, SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS } from "../billing-plan";
+import { SUBSCRIPTION_PLAN, SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS, billingStartUrl } from "../billing-plan";
 import {
   gateState,
   getSubscription,
@@ -20,12 +20,14 @@ import {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  const url = new URL(request.url);
   const subscription = await getSubscription(session.shop);
 
   return {
     state: gateState(subscription),
     canCancel: hasPushAccess(subscription) && subscription?.shopifySubscriptionId != null,
     trialDaysLeft: trialDaysLeft(subscription?.trialEndsAt ?? null),
+    billingStartUrl: billingStartUrl(session.shop, url.searchParams.get("host")),
   };
 };
 
@@ -146,7 +148,7 @@ export default function Billing() {
 
       <s-section>
         {showResubscribe ? (
-          <s-button variant="primary" href="/app/billing/start">
+          <s-button variant="primary" href={loaderData.billingStartUrl} target="_top">
             {loaderData.state === "none" || loaderData.state === "pending"
               ? "Start free trial"
               : "Resubscribe"}

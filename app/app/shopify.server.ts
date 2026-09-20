@@ -12,16 +12,18 @@ import { EncryptingSessionStorage } from "./encrypted-session-storage.server";
 import { SCOPES } from "./scopes.server";
 
 /**
- * Real merchants must be charged for real; only a local/non-production
- * deploy (or an explicit override, for a one-off test on a production
- * deploy) should ever create a Shopify test charge. Test shops and demo
- * stores can't be charged regardless, but production traffic still
- * shouldn't default to isTest just because a real store happens to be new.
+ * Whether every Shopify billing call creates a test charge (never bills a
+ * card) instead of a real one. Deliberately not keyed off NODE_ENV: the
+ * Dockerfile hardcodes NODE_ENV=production for every deploy (see
+ * README "Deploying"), so a Railway service spun up purely for testing is
+ * just as "production" as the real one by that signal alone — trusting it
+ * here would mean dev/test deploys create real charges by default, which is
+ * the one failure mode billing code can't afford. Test mode is therefore
+ * the default; only an explicit SHOPIFY_BILLING_TEST_MODE=false — set on
+ * the one deploy that's actually the real production app — turns on real
+ * charges.
  */
-export const BILLING_IS_TEST =
-  process.env.SHOPIFY_BILLING_TEST_MODE !== undefined
-    ? process.env.SHOPIFY_BILLING_TEST_MODE === "true"
-    : process.env.NODE_ENV !== "production";
+export const BILLING_IS_TEST = process.env.SHOPIFY_BILLING_TEST_MODE !== "false";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,

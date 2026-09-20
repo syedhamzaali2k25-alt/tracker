@@ -31,7 +31,7 @@ import {
   saveSpreadsheetId,
 } from "../google-account.server";
 import { saveBatch } from "../push-batches.server";
-import { SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS } from "../billing-plan";
+import { SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS, billingStartUrl } from "../billing-plan";
 import {
   gateState,
   getSubscription,
@@ -61,6 +61,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     trialDaysLeft: trialDaysLeft(subscription?.trialEndsAt ?? null),
     billingApproved: url.searchParams.get("billingApproved") === "1",
     billingDeclined: url.searchParams.get("billingDeclined") === "1",
+    billingStartUrl: billingStartUrl(session.shop, url.searchParams.get("host")),
   };
 };
 
@@ -795,7 +796,12 @@ export default function Dashboard() {
             </s-paragraph>
           )}
         </s-stack>
-        <s-button slot="primary-action" variant="primary" href="/app/billing/start">
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          href={loaderData.billingStartUrl}
+          target="_top"
+        >
           {needsResubscribe ? "Resubscribe" : "Start free trial"}
         </s-button>
         <s-button

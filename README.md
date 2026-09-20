@@ -157,7 +157,7 @@ instead).
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Yes | The matching secret from that same OAuth client. |
 | `SENDGRID_API_KEY` | Cron service only | SendGrid → Settings → API Keys → Create API Key, "Restricted Access" with only "Mail Send" permission. Only the weekly-check cron service sends email; the web service never needs this. |
 | `EMAIL_FROM` | Cron service only | The single sender address you verified in SendGrid (Settings → Sender Authentication → Single Sender Verification — no domain needed, see "Weekly margin alerts" below). Must match exactly what you verified. |
-| `SHOPIFY_BILLING_TEST_MODE` | No | Whether "Start free trial" creates a Shopify test charge instead of a real one. Defaults to `true` unless `NODE_ENV=production`, so local dev and a tunnel run never risk a real charge without any setup. Set explicitly (`true`/`false`) to override that default. |
+| `SHOPIFY_BILLING_TEST_MODE` | No | Whether "Start free trial" creates a Shopify test charge instead of a real one. Defaults to `true` always — not keyed off `NODE_ENV`, since the Dockerfile hardcodes `NODE_ENV=production` for every deploy, test or real (see the row below). Set to `false` only on the one deploy that should create real charges. |
 | `SHOP_CUSTOM_DOMAIN` | No | Only if you support a merchant's custom domain on the storefront side; see the Shopify template's own docs. Unset by default. |
 | `PORT` | No | `@react-router/serve` listens on this; your host sets it automatically (Railway/Render/Fly all do). Defaults to 3000 if unset. |
 | `NODE_ENV` | No | Already set to `production` in the Dockerfile; most hosts also set this themselves. |
@@ -253,7 +253,13 @@ truth — Shopify is — kept in sync two ways:
   `billing.request()`, which redirects to Shopify's own confirmation page;
   approving or declining redirects back to
   `app/app/routes/app.billing.callback.tsx`, which re-checks the live
-  subscription and writes the result.
+  subscription and writes the result. The button itself
+  (`billingStartUrl()` in `app/app/billing-plan.ts`) is a plain top-level
+  `<s-button href=... target="_top">`, not a fetcher submission or an
+  in-app `<Link>` — `authenticate.admin()` can't resolve a shop from a
+  same-origin `.data` navigation the way it can from an actual document
+  request, so the link carries `shop`/`host` explicitly and forces a real
+  top-level load, the same pattern "Connect Google" already uses.
 - **The merchant cancels (or Shopify freezes billing) from inside Shopify
   admin, never touching our app.** This is the case Shopify doesn't tell us
   about through any redirect, so it needs a webhook:
@@ -277,11 +283,13 @@ else.
 
 **Test charges.** `SHOPIFY_BILLING_TEST_MODE` (see the table above) controls
 `isTest` on every `billing.request`/`check`/`cancel` call. It defaults to
-`true` outside of `NODE_ENV=production`, so local dev and a Shopify CLI
-tunnel run never create a real charge without any setup, and defaults to
-`false` in production so real merchants are actually billed. Shopify test
-charges never touch a card regardless of store type; dev/demo stores can't
-be charged at all, test mode or not.
+`true` unconditionally — not off `NODE_ENV`, since the Dockerfile hardcodes
+`NODE_ENV=production` on every deploy (test or real), which would otherwise
+make a throwaway test deploy create real charges by default. Only an
+explicit `SHOPIFY_BILLING_TEST_MODE=false`, set on the one deploy that's
+actually production, turns on real charges. Shopify test charges never
+touch a card regardless of store type; dev/demo stores can't be charged at
+all, test mode or not.
 
 **Partner Dashboard setup this needs, beyond what's already there:**
 
@@ -311,11 +319,11 @@ be charged at all, test mode or not.
 - The App Review team explicitly tests the billing flow before approving
   (Shopify's own "Pass app review" checklist calls this out as a distinct
   step from testing OAuth). Test it yourself first: with
-  `SHOPIFY_BILLING_TEST_MODE` unset (or `true`) on a non-production
-  deploy, install on a dev store, click through "Start free trial," approve
-  it on Shopify's confirmation page, and confirm the dashboard actually
-  unlocks — then also test declining, to confirm the app still works (read
-  access) rather than erroring.
+  `SHOPIFY_BILLING_TEST_MODE` left unset (test mode, the default), install
+  on a dev store, click through "Start free trial," approve it on Shopify's
+  confirmation page, and confirm the dashboard actually unlocks — then also
+  test declining, to confirm the app still works (read access) rather than
+  erroring.
 - The `write_own_subscription_contracts`/`read_own_subscription_contracts`
   scopes some subscription docs mention are for merchant-facing selling
   plans (Shopify Subscriptions APIs) — a completely different feature from
