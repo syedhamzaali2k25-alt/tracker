@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { redirect } from "react-router";
 import { authenticate, BILLING_IS_TEST } from "../shopify.server";
-import { SUBSCRIPTION_PLAN } from "../billing-plan";
+import { SUBSCRIPTION_PLAN, SUBSCRIPTION_PLAN_TEAM } from "../billing-plan";
 import { saveSubscriptionFromShopify } from "../subscription.server";
 
 /**
@@ -27,7 +27,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const host = new URL(request.url).searchParams.get("host");
 
   const { appSubscriptions } = await billing.check({
-    plans: [SUBSCRIPTION_PLAN],
+    plans: [SUBSCRIPTION_PLAN, SUBSCRIPTION_PLAN_TEAM],
     isTest: BILLING_IS_TEST,
   });
 

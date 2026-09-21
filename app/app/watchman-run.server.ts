@@ -12,6 +12,16 @@ export async function getLastWatchmanRun(shop: string): Promise<WatchmanRunResul
   return row ? (JSON.parse(row.data) as WatchmanRunResult) : undefined;
 }
 
+/**
+ * Just the timestamp, without parsing the (potentially large) rows/summary
+ * JSON blob — used by the cron entry point to decide whether a shop is due
+ * for its next check yet, before doing any Shopify API work for it.
+ */
+export async function getLastWatchmanRunAt(shop: string): Promise<Date | null> {
+  const row = await db.watchmanRun.findUnique({ where: { shop }, select: { ranAt: true } });
+  return row?.ranAt ?? null;
+}
+
 export async function saveWatchmanRun(shop: string, result: WatchmanRunResult): Promise<void> {
   const data = JSON.stringify(result);
   await db.watchmanRun.upsert({

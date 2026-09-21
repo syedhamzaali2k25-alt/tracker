@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { authenticate, BILLING_IS_TEST } from "../shopify.server";
-import { SUBSCRIPTION_PLAN } from "../billing-plan";
+import { SUBSCRIPTION_PLAN, SUBSCRIPTION_PLAN_TEAM, type PlanTier } from "../billing-plan";
 
 /**
  * Carries `host` through to the callback, not just `shop`. Without it,
@@ -35,9 +35,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing } = await authenticate.admin(request);
   const url = new URL(request.url);
   const returnUrl = billingReturnUrl(session.shop, url.searchParams.get("host"));
-  console.log(`[app.billing.start loader] shop=${session.shop} returnUrl=${returnUrl}`);
+  const requestedPlan = url.searchParams.get("plan");
+  const tier: PlanTier = requestedPlan === "team" ? "team" : "standard";
+  console.log(`[app.billing.start loader] shop=${session.shop} tier=${tier} returnUrl=${returnUrl}`);
   await billing.request({
-    plan: SUBSCRIPTION_PLAN,
+    plan: tier === "team" ? SUBSCRIPTION_PLAN_TEAM : SUBSCRIPTION_PLAN,
     isTest: BILLING_IS_TEST,
     returnUrl,
   });

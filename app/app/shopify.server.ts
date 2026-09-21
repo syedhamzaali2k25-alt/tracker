@@ -7,7 +7,13 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
-import { SUBSCRIPTION_PLAN, SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS } from "./billing-plan";
+import {
+  SUBSCRIPTION_PLAN,
+  SUBSCRIPTION_PLAN_TEAM,
+  SUBSCRIPTION_PRICE,
+  SUBSCRIPTION_PRICE_TEAM,
+  SUBSCRIPTION_TRIAL_DAYS,
+} from "./billing-plan";
 import { EncryptingSessionStorage } from "./encrypted-session-storage.server";
 import { SCOPES } from "./scopes.server";
 
@@ -40,6 +46,16 @@ const shopify = shopifyApp({
       lineItems: [
         {
           amount: SUBSCRIPTION_PRICE,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
+    },
+    [SUBSCRIPTION_PLAN_TEAM]: {
+      trialDays: SUBSCRIPTION_TRIAL_DAYS,
+      lineItems: [
+        {
+          amount: SUBSCRIPTION_PRICE_TEAM,
           currencyCode: "USD",
           interval: BillingInterval.Every30Days,
         },

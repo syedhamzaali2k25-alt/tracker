@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gateState, hasPushAccess, trialDaysLeft, type StoredSubscription } from "./subscription.server";
+import { gateState, hasPushAccess, isTeamPlan, trialDaysLeft, type StoredSubscription } from "./subscription.server";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -9,6 +9,7 @@ function subscription(overrides: Partial<StoredSubscription> = {}): StoredSubscr
     shopifySubscriptionId: "gid://shopify/AppSubscription/1",
     status: "ACTIVE",
     isTest: false,
+    planTier: "standard",
     trialEndsAt: null,
     currentPeriodEnd: null,
     ...overrides,
@@ -96,6 +97,29 @@ test("hasPushAccess is false for a frozen subscription", () => {
 
 test("hasPushAccess is false for a pending subscription", () => {
   assert.equal(hasPushAccess(subscription({ status: "PENDING" })), false);
+});
+
+// --- isTeamPlan: hasPushAccess narrowed to planTier === "team" ---
+
+test("isTeamPlan is true for an active Team subscription", () => {
+  assert.equal(isTeamPlan(subscription({ status: "ACTIVE", planTier: "team" })), true);
+});
+
+test("isTeamPlan is true while trialing on the Team plan", () => {
+  const trialEndsAt = new Date(Date.now() + DAY_MS);
+  assert.equal(isTeamPlan(subscription({ status: "ACTIVE", trialEndsAt, planTier: "team" })), true);
+});
+
+test("isTeamPlan is false for an active standard subscription", () => {
+  assert.equal(isTeamPlan(subscription({ status: "ACTIVE", planTier: "standard" })), false);
+});
+
+test("isTeamPlan is false with no subscription row at all", () => {
+  assert.equal(isTeamPlan(null), false);
+});
+
+test("isTeamPlan is false for a cancelled Team subscription — losing push access loses Team perks too", () => {
+  assert.equal(isTeamPlan(subscription({ status: "CANCELLED", planTier: "team" })), false);
 });
 
 // --- trialDaysLeft: boundary cases ---

@@ -1,8 +1,14 @@
-// Entry point for the weekly watchman job — run via `npm run cron:weekly-
-// check` (tsx, not through the Vite/React Router build) as a separate
-// Railway service pointing at this same repo, on a weekly cron schedule,
-// with a startCommand override instead of `npm run docker-start`. See
-// README "Weekly margin alerts" for the Railway setup.
+// Entry point for the watchman job — run via `npm run cron:weekly-check`
+// (tsx, not through the Vite/React Router build) as a separate Railway
+// service pointing at this same repo, on a daily cron schedule, with a
+// startCommand override instead of `npm run docker-start`. See README
+// "Weekly margin alerts" for the Railway setup.
+//
+// Despite the script/npm-script name (kept for now to avoid a churny
+// rename), this no longer runs every shop on a single fixed cadence: it's
+// meant to be scheduled daily, and each shop is only actually checked once
+// it's due, per its own plan tier (see isDue below) — standard plans stay
+// on a weekly cadence, Team plans get checked daily.
 //
 // Deliberately its own script rather than an HTTP route on the web
 // service: Railway's Cron Job service type runs a command to completion on
@@ -11,28 +17,54 @@ import "@shopify/shopify-app-react-router/adapters/node";
 import type { ShopContext } from "~lib/shopify/client.js";
 import { runDiagnostic } from "~lib/pipeline/runDiagnostic.js";
 import { fetchShopEmail } from "~lib/shopify/queries.js";
-import { diffMarginRows, hasChanges } from "~lib/pipeline/weeklyDiff.js";
+import { diffMarginRows, hasChanges, type WeeklyDiffResult } from "~lib/pipeline/weeklyDiff.js";
 import { buildWeeklyAlertEmail } from "~lib/pipeline/weeklyAlertEmail.js";
 import db from "../db.server";
 import { decrypt, isEncrypted } from "../crypto.server";
 import { getShopSettings } from "../shop-settings.server";
-import { getLastWatchmanRun, saveWatchmanRun } from "../watchman-run.server";
-import { getSubscription, hasPushAccess } from "../subscription.server";
+import { getLastWatchmanRun, getLastWatchmanRunAt, saveWatchmanRun } from "../watchman-run.server";
+import { getSubscription, hasPushAccess, isTeamPlan, type StoredSubscription } from "../subscription.server";
+import { deleteExpiredPushBatches } from "../push-batches.server";
 import { sendEmail } from "../email.server";
+import type { PlanTier } from "../billing-plan";
 
 function decryptAccessToken(raw: string): string {
   return isEncrypted(raw) ? decrypt(raw) : raw;
 }
 
+/** Standard plans get the old weekly cadence; Team plans get checked daily. */
+const SYNC_INTERVAL_DAYS: Record<PlanTier, number> = {
+  standard: 7,
+  team: 1,
+};
+
+/** History/Undo retention (app/push-batches.server.ts's deleteExpiredPushBatches), by tier. */
+const RETENTION_MONTHS: Record<PlanTier, number> = {
+  standard: 3,
+  team: 12,
+};
+
+function planTierOf(subscription: StoredSubscription | null): PlanTier {
+  return isTeamPlan(subscription) ? "team" : "standard";
+}
+
+/** No previous run at all means it's always due — covers a shop's very first check. */
+function isDue(lastRanAt: Date | null, tier: PlanTier): boolean {
+  if (!lastRanAt) return true;
+  const intervalMs = SYNC_INTERVAL_DAYS[tier] * 24 * 60 * 60 * 1000;
+  return Date.now() - lastRanAt.getTime() >= intervalMs;
+}
+
 /**
  * One shop's worth of work: re-run the diagnostic, diff against last week,
  * email if anything newly crossed into below-cost/low-margin and the
- * merchant hasn't turned that off, then save this run as the new baseline.
- * Any throw here is caught by the caller — a bad shop must not take down
- * the rest of the loop.
+ * merchant hasn't turned that off, clean up expired History/Undo batches,
+ * then save this run as the new baseline. Any throw here is caught by the
+ * caller — a bad shop must not take down the rest of the loop.
  */
-async function checkShop(shopContext: ShopContext): Promise<void> {
+async function checkShop(shopContext: ShopContext, subscription: StoredSubscription | null): Promise<void> {
   const shop = shopContext.shop;
+  const tier = planTierOf(subscription);
 
   // fetchAllVariants/fetchUnitsSoldByVariant (inside runDiagnostic) go
   // through shopifyGraphQL, which tracks each shop's own throttle bucket
@@ -52,20 +84,33 @@ async function checkShop(shopContext: ShopContext): Promise<void> {
     // checked here rather than skipping checkShop() entirely, so the diff
     // baseline (saveWatchmanRun below) still advances for a free shop and
     // they get a full backlog of changes the moment they do subscribe.
-    if (!hasPushAccess(await getSubscription(shop))) {
+    if (!hasPushAccess(subscription)) {
       console.log(`[weekly-check] ${shop}: has changes but no active subscription — not sending`);
     } else {
       const settings = await getShopSettings(shop);
       if (settings.emailAlerts) {
-        const to = settings.alertEmail ?? (await fetchShopEmail(shopContext));
-        if (to) {
-          const email = buildWeeklyAlertEmail(shop, diff, summary.currencyCode);
-          await sendEmail({ to, ...email });
-          console.log(
-            `[weekly-check] ${shop}: emailed ${to} — ${diff.newlyBelowCost.length} newly below cost, ${diff.newlyLowMargin.length} newly low-margin`,
-          );
+        // The "price drops below cost" alert is Team-only (see the task
+        // spec this was built from); the low-margin-threshold half of the
+        // digest is unaffected and still goes to any paid shop, standard
+        // or Team, same as before.
+        const alertDiff: WeeklyDiffResult =
+          tier === "team" ? diff : { newlyBelowCost: [], newlyLowMargin: diff.newlyLowMargin };
+
+        if (hasChanges(alertDiff)) {
+          const to = settings.alertEmail ?? (await fetchShopEmail(shopContext));
+          if (to) {
+            const email = buildWeeklyAlertEmail(shop, alertDiff, summary.currencyCode);
+            await sendEmail({ to, ...email });
+            console.log(
+              `[weekly-check] ${shop}: emailed ${to} — ${alertDiff.newlyBelowCost.length} newly below cost, ${alertDiff.newlyLowMargin.length} newly low-margin`,
+            );
+          } else {
+            console.warn(`[weekly-check] ${shop}: has changes to report but no email address available (no override set, no Shopify shop email) — skipping send`);
+          }
         } else {
-          console.warn(`[weekly-check] ${shop}: has changes to report but no email address available (no override set, no Shopify shop email) — skipping send`);
+          console.log(
+            `[weekly-check] ${shop}: only newly-below-cost changes and this is a standard-plan shop — below-cost alerts are Team-only, not sending`,
+          );
         }
       } else {
         console.log(`[weekly-check] ${shop}: has changes but emailAlerts is off — not sending`);
@@ -76,6 +121,7 @@ async function checkShop(shopContext: ShopContext): Promise<void> {
   }
 
   await saveWatchmanRun(shop, { rows, summary });
+  await deleteExpiredPushBatches(shop, RETENTION_MONTHS[tier]);
 }
 
 async function main(): Promise<void> {
@@ -83,6 +129,7 @@ async function main(): Promise<void> {
   console.log(`[weekly-check] starting: ${sessions.length} installed shop(s)`);
 
   let succeeded = 0;
+  let skipped = 0;
   let failed = 0;
 
   for (const session of sessions) {
@@ -92,7 +139,19 @@ async function main(): Promise<void> {
     };
 
     try {
-      await checkShop(shopContext);
+      const subscription = await getSubscription(session.shop);
+      const tier = planTierOf(subscription);
+      const lastRanAt = await getLastWatchmanRunAt(session.shop);
+
+      if (!isDue(lastRanAt, tier)) {
+        console.log(
+          `[weekly-check] ${session.shop}: not due yet (${tier} plan, last ran ${lastRanAt?.toISOString()}) — skipping`,
+        );
+        skipped++;
+        continue;
+      }
+
+      await checkShop(shopContext, subscription);
       succeeded++;
     } catch (error) {
       failed++;
@@ -103,7 +162,7 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log(`[weekly-check] done: ${succeeded} succeeded, ${failed} failed`);
+  console.log(`[weekly-check] done: ${succeeded} succeeded, ${skipped} skipped (not due), ${failed} failed`);
 }
 
 main()

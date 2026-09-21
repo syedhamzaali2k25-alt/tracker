@@ -815,11 +815,12 @@
 }
 
 .pricingGrid {
-  max-width: 42rem;
+  max-width: 62rem;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 1.5rem;
+  align-items: start;
 }
 
 .priceCard {
@@ -1095,6 +1096,15 @@
   .detailRowReverse .detailIllustration,
   .detailRowReverse .detailText {
     order: initial;
+  }
+
+  .pricingGrid {
+    max-width: 42rem;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .priceCardTeam {
+    grid-column: span 2;
   }
 }
 

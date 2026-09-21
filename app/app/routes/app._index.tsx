@@ -512,9 +512,9 @@ export default function Dashboard() {
       {loaderData.subscriptionState === "trialing" && loaderData.trialDaysLeft !== null && (
         <s-banner tone="info" heading={`${loaderData.trialDaysLeft} day${loaderData.trialDaysLeft === 1 ? "" : "s"} left in your free trial`}>
           <s-paragraph>
-            After the trial, pushing changes, History/Undo, and the weekly
-            email alert are ${SUBSCRIPTION_PRICE}/month. Sync and the Google
-            Sheet stay free either way.
+            After the trial, pushing changes and History/Undo start at $
+            {SUBSCRIPTION_PRICE}/month on the Standard plan. Sync and the
+            Google Sheet stay free either way.
           </s-paragraph>
         </s-banner>
       )}
@@ -793,12 +793,13 @@ export default function Dashboard() {
           <s-paragraph>
             Margin Tracker is free to sync, browse the full dashboard, and
             build your Google Sheet. Pushing New Price / New Cost / New Title
-            values back to Shopify needs the paid plan, along with History,
-            Undo, and the weekly email alert.
+            values back to Shopify needs a paid plan, along with History and
+            Undo.
           </s-paragraph>
           <s-paragraph>
             <s-text type="strong">
-              ${SUBSCRIPTION_PRICE}/month, {SUBSCRIPTION_TRIAL_DAYS}-day free trial.
+              Starts at ${SUBSCRIPTION_PRICE}/month, {SUBSCRIPTION_TRIAL_DAYS}-day free trial. See Billing for the
+              Team plan.
             </s-text>
           </s-paragraph>
           {needsResubscribe && (

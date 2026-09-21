@@ -1,4 +1,5 @@
 import db from "./db.server";
+import { planTierFromName, type PlanTier } from "./billing-plan";
 
 /** Mirrors Shopify's AppSubscription.status verbatim. */
 export type ShopifySubscriptionStatus =
@@ -13,6 +14,7 @@ export interface StoredSubscription {
   shopifySubscriptionId: string | null;
   status: ShopifySubscriptionStatus;
   isTest: boolean;
+  planTier: PlanTier;
   trialEndsAt: Date | null;
   currentPeriodEnd: Date | null;
 }
@@ -61,6 +63,17 @@ export function hasPushAccess(sub: StoredSubscription | null): boolean {
 }
 
 /**
+ * Whether this shop is unlocked AND on the higher Team tier — the extra
+ * gate for Team-only features (daily sync, 12mo history, the price-drop
+ * email alert). Mirrors hasPushAccess's shape: false for a lapsed or
+ * never-subscribed shop, even one whose stored planTier happens to say
+ * "team" from a previous subscription.
+ */
+export function isTeamPlan(sub: StoredSubscription | null): boolean {
+  return hasPushAccess(sub) && sub?.planTier === "team";
+}
+
+/**
  * Whole days left in the trial, for the "N days left" banner. Computed here
  * (server-side, at loader time) rather than in the component with
  * `Date.now()` at render time, which React's purity rules disallow.
@@ -77,6 +90,7 @@ export async function getSubscription(shop: string): Promise<StoredSubscription 
     shopifySubscriptionId: row.shopifySubscriptionId,
     status: row.status as ShopifySubscriptionStatus,
     isTest: row.isTest,
+    planTier: row.planTier === "team" ? "team" : "standard",
     trialEndsAt: row.trialEndsAt,
     currentPeriodEnd: row.currentPeriodEnd,
   };
@@ -87,12 +101,17 @@ export async function getSubscription(shop: string): Promise<StoredSubscription 
  * billing.check's response), used right after the merchant lands back from
  * the confirmation page. Shopify doesn't hand back a trialEndsAt directly,
  * so it's derived once here from createdAt + trialDays and stored, rather
- * than recomputed from "now" on every gate check.
+ * than recomputed from "now" on every gate check. planTier is derived from
+ * `sub.name` — the exact plan name Shopify confirms the merchant approved —
+ * rather than trusting whichever plan our own UI last linked to, so it stays
+ * correct even if the merchant approved a different plan than the one they
+ * clicked (e.g. an already-open confirmation tab for the other plan).
  */
 export async function saveSubscriptionFromShopify(
   shop: string,
   sub: {
     id: string;
+    name: string;
     status: string;
     test: boolean;
     trialDays: number;
@@ -108,6 +127,7 @@ export async function saveSubscriptionFromShopify(
     shopifySubscriptionId: sub.id,
     status: sub.status,
     isTest: sub.test,
+    planTier: planTierFromName(sub.name),
     trialEndsAt,
     currentPeriodEnd: sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null,
   };
@@ -120,11 +140,16 @@ export async function saveSubscriptionFromShopify(
 
 /**
  * Status-only update from the APP_SUBSCRIPTIONS_UPDATE webhook, whose
- * payload carries just { admin_graphql_api_id, status } — not trial or
- * period-end info. Deliberately leaves trialEndsAt/currentPeriodEnd alone
- * rather than nulling them out; gateState() only consults trialEndsAt while
- * status is still ACTIVE, so a stale value here is harmless once the status
- * moves to CANCELLED/DECLINED/EXPIRED/FROZEN.
+ * payload carries just { admin_graphql_api_id, status } — not trial,
+ * period-end, or plan-name info. Deliberately leaves trialEndsAt/
+ * currentPeriodEnd/planTier alone on an existing row rather than resetting
+ * them; gateState() only consults trialEndsAt while status is still ACTIVE,
+ * so a stale value here is harmless once the status moves to
+ * CANCELLED/DECLINED/EXPIRED/FROZEN. The create-branch (only reachable if
+ * this webhook somehow arrives before the shop ever went through
+ * app.billing.callback.tsx) has no plan name to go on either, so it
+ * defaults to "standard" — the same safe-default pattern already used for
+ * isTest here.
  */
 export async function updateSubscriptionStatus(
   shop: string,
@@ -133,7 +158,7 @@ export async function updateSubscriptionStatus(
 ): Promise<void> {
   await db.subscription.upsert({
     where: { shop },
-    create: { shop, shopifySubscriptionId, status, isTest: false },
+    create: { shop, shopifySubscriptionId, status, isTest: false, planTier: "standard" },
     update: { shopifySubscriptionId, status },
   });
 }

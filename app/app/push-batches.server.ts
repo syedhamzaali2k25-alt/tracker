@@ -63,3 +63,17 @@ export async function markBatchReverted(id: string): Promise<void> {
 export async function deletePushBatches(shop: string): Promise<void> {
   await db.pushBatch.deleteMany({ where: { shop } });
 }
+
+/**
+ * Plan-tier-aware History/Undo retention: standard plans keep 3 months of
+ * push batches, Team plans keep 12 (see app/cron/weeklyCheck.server.ts,
+ * the only scheduled execution context in this app, which calls this once
+ * per shop per run). A reverted batch is deleted the same as any other once
+ * it ages out — reverting only marks it undone, it doesn't extend how long
+ * the record is kept.
+ */
+export async function deleteExpiredPushBatches(shop: string, retentionMonths: number): Promise<void> {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - retentionMonths);
+  await db.pushBatch.deleteMany({ where: { shop, createdAt: { lt: cutoff } } });
+}

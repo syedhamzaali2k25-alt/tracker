@@ -222,14 +222,36 @@ empty state instead of showing a crash.
 
 Margin Tracker is free to install, sync, browse the full dashboard, and
 create/read the Google Sheet. Pushing New Price / New Cost values back to
-Shopify is the paid feature — one plan, $15/month with a 14-day free trial
-(`app/app/billing-plan.ts`) — and History/Undo (which only exist as a record
-of pushes) and the weekly email alert are gated the same way. This uses
-Shopify's classic Billing API (`appSubscriptionCreate` etc.) via the
-`billing` helper `@shopify/shopify-app-react-router` exposes from
-`authenticate.admin()`, configured in `app/app/shopify.server.ts` — not
-Stripe or any other processor, and not the newer "Shopify App Pricing"
-managed-pricing system.
+Shopify is a paid feature, offered as **two plans** (`app/app/billing-plan.ts`):
+**Standard**, $15/month, and **Team**, $30/month — both with a 14-day free
+trial. Every paid shop gets pushing, History/Undo, and the low-margin half
+of the email alert; Team additionally gets daily sync (vs. weekly),
+12-month history retention (vs. 3), and the below-cost half of the email
+alert (see "Weekly margin alerts" above for all three). This uses Shopify's
+classic Billing API (`appSubscriptionCreate` etc.) via the `billing` helper
+`@shopify/shopify-app-react-router` exposes from `authenticate.admin()`,
+configured in `app/app/shopify.server.ts` with both plans as separate
+entries — not Stripe or any other processor, and not the newer "Shopify App
+Pricing" managed-pricing system.
+
+**Switching between plans is manual, not automated.** Shopify's Billing API
+has no built-in "swap this subscription for a different plan" operation —
+`appSubscriptionCreate` only ever creates a new one. So `app.billing.tsx`
+doesn't attempt an automated cancel-then-restart sequence; a subscribed
+merchant sees both plans, with the one they're not on offering its own
+"Start free trial" link, and copy explaining they need to cancel their
+current plan first. This trades a slicker one-click upgrade for not having
+an untested automated multi-step billing flow.
+
+**Multi-store support is out of scope for both plans.** `Subscription`,
+like every other per-shop table in this schema, is keyed by `shop` alone —
+one row, one plan, one Shopify store. Each Shopify store is its own app
+install with its own OAuth session, so "share one Team subscription across
+several stores" doesn't fit this model without a larger redesign (a
+shop-to-billing-account layer, sharing sessions/tokens across stores,
+etc.). The Team plan's "share the sheet with your team" is about multiple
+*people* on one store's Google Sheet, not multiple *stores* on one
+subscription.
 
 **The gate is server-side, not a hidden button.** The dashboard's "Push
 changes" button, and the whole History page, check the subscription
@@ -238,15 +260,22 @@ actual gate is `hasPushAccess()` (`app/app/subscription.server.ts`) checked
 again inside the `preview`/`apply` actions in `app._index.tsx`, the loader
 and `undo` action in `app.history.tsx`, and the weekly cron job before it
 sends an email. A request that skips the UI entirely still hits the same
-check.
+check. `isTeamPlan()`, in the same file, mirrors this pattern for the three
+Team-only perks (daily sync, 12-month history, below-cost email alerts) —
+it's `hasPushAccess()` narrowed to `planTier === "team"`, so a lapsed Team
+subscriber loses Team perks the same moment they lose push access, not
+independently.
 
 **Where subscription status is stored.** A `Subscription` row per shop
 (`app/prisma/schema.prisma`) mirrors Shopify's own `AppSubscription` —
 `status` (`ACTIVE`/`CANCELLED`/`DECLINED`/`EXPIRED`/`FROZEN`/`PENDING`,
-copied verbatim), `trialEndsAt` (derived once from `createdAt + trialDays`
-at subscription-creation time, not recomputed from "now" each check), and
-`shopifySubscriptionId`. This is a read-optimized mirror, not the source of
-truth — Shopify is — kept in sync two ways:
+copied verbatim), `planTier` (`"standard"` | `"team"`, derived from
+`AppSubscription.name` — the exact plan name Shopify confirms the merchant
+approved, not whichever plan our own UI last linked to), `trialEndsAt`
+(derived once from `createdAt + trialDays` at subscription-creation time,
+not recomputed from "now" each check), and `shopifySubscriptionId`. This is
+a read-optimized mirror, not the source of truth — Shopify is — kept in
+sync two ways:
 
 - **The merchant approves or declines from inside the app.** Clicking
   "Start free trial" (`app/app/routes/app.billing.start.tsx`) calls
@@ -304,11 +333,13 @@ all, test mode or not.
   that file, editing the TOML alone doesn't reach Shopify until deployed.
 - The App Store listing's **Pricing details** section (Partner Dashboard →
   your app → Distribution → Shopify App Store listing → Pricing) needs to
-  describe this accurately for the review team and for merchants: free to
-  install, $15/month with a 14-day free trial to unlock pushing
-  changes/History/the weekly email. This is listing copy Shopify reviews
-  for accuracy against what the app actually charges — it doesn't drive the
-  charge itself the way it would for Shopify App Pricing.
+  describe both plans accurately for the review team and for merchants:
+  free to install; Standard, $15/month with a 14-day free trial, unlocks
+  pushing changes/History/Undo/weekly low-margin alerts; Team, $30/month
+  with the same trial, adds daily sync, 12-month history, and below-cost
+  email alerts. This is listing copy Shopify reviews for accuracy against
+  what the app actually charges — it doesn't drive the charge itself the
+  way it would for Shopify App Pricing.
 
 **What changes for App Store submission now that the app charges money:**
 
@@ -352,21 +383,39 @@ changed since.
 ### Weekly margin alerts
 
 A separate script (`app/app/cron/weeklyCheck.server.ts`, run via
-`npm run cron:weekly-check`) re-runs the diagnostic for every currently
-installed shop, compares it to that shop's own previous run
+`npm run cron:weekly-check`) re-runs the diagnostic for shops that are due
+for a check, compares it to that shop's own previous run
 (`app/app/watchman-run.server.ts` — a `WatchmanRun` row per shop, kept
 separate from the dashboard's `DiagnosticCache` so an ad-hoc "Sync" click
 doesn't skew the week-over-week baseline), and emails the merchant only
 when something **newly** crossed into below-cost or under the margin
-threshold — not a full re-report every week. The diffing itself
+threshold — not a full re-report every check. The diffing itself
 (`src/pipeline/weeklyDiff.ts`) is a pure function: given last week's rows
 and this week's, keyed by variant ID, it returns exactly the variants whose
 flag just became `below-cost` or `low-margin` (a variant already in either
 state stays quiet; a brand new variant that debuts already bad still gets
 reported).
 
+**Sync cadence is now plan-tier-aware**, not a flat weekly run for every
+shop: the script itself is meant to be scheduled **daily** (see "Deploying"
+below), but for each installed shop it checks `app/app/subscription.server.ts`'s
+`planTier` and `app/app/watchman-run.server.ts`'s `WatchmanRun.ranAt` before
+doing any Shopify work — a standard-plan shop is skipped unless at least 7
+days have passed since its last run, a Team-plan shop unless at least 1 day
+has. A shop with no previous run at all is always due. This means the
+Railway Cron Job's own schedule only needs to be *at least as frequent* as
+the shortest plan's interval (daily); the script decides per shop whether
+that run is actually its turn.
+
+The **price-drop-below-cost half** of the alert email is Team-plan only —
+standard-plan shops still get the low-margin-threshold half of the digest,
+same as before, but no longer the below-cost half. This is a deliberate
+behavior change from the single-plan era, gating below-cost alerts as one
+of the three Team-tier perks (see "Billing" below for the other two, daily
+sync and 12-month history).
+
 It's a plain script, not an HTTP route, run as its own Railway Cron Job
-service on a weekly schedule — see "Deploying" below for the exact setup.
+service on a daily schedule — see "Deploying" below for the exact setup.
 Shops are processed one at a time in a `for` loop with a `try`/`catch`
 around each: one shop's Shopify API error, missing Google connection, or
 SendGrid failure is logged and skipped, never aborting the shops after it.
@@ -375,7 +424,9 @@ Rate limiting isn't reimplemented here — `runDiagnostic()` calls the same
 each shop's own cost-based throttle bucket and backs off automatically
 (Phase 0.4); running shops sequentially rather than concurrently means
 there's never more than one shop's worth of Shopify traffic in flight at
-once.
+once. Each run also prunes that shop's `PushBatch` history past its plan's
+retention window (`app/app/push-batches.server.ts`'s
+`deleteExpiredPushBatches` — 3 months standard, 12 months Team).
 
 **Two decisions made here, not left as defaults to stumble into:**
 
@@ -460,9 +511,10 @@ file is safe (mirrors how `_index/` already needed to work).
 
 **Railway** is the pick here, over Render or Fly. All three can run a
 Node/Postgres app fine, but the deciding factor is the still-unbuilt Phase 5
-weekly re-check: it needs a real cron schedule (once a week, not "roughly
-periodically"), running as its own process against the same codebase and
-database.
+re-check: it needs a real cron schedule (daily, not "roughly periodically"
+— the script itself decides per shop whether standard's weekly or Team's
+daily interval is actually due, see "Weekly margin alerts" above), running
+as its own process against the same codebase and database.
 
 - **Railway** has a first-class Cron Job service type: point it at this repo
   with a different start command and a cron expression, and it runs on
@@ -474,12 +526,11 @@ database.
   are configured as more separate, more clicks-in-the-dashboard pieces than
   Railway's single project holding both.
 - **Fly.io** has no first-party cron resource. The closest thing is a
-  Fly Machine's built-in `schedule` field (`hourly`/`daily`/`monthly`) —
-  coarser than a real cron expression, so a *weekly* job means running it
-  daily and having the job itself check "is today the right day," or
-  reaching for an external trigger (e.g. a GitHub Actions cron hitting a
-  webhook route). Doable, but it's the one place Fly is a worse fit for
-  what this app specifically needs.
+  Fly Machine's built-in `schedule` field (`hourly`/`daily`/`monthly`),
+  which is coarse enough for the *daily* schedule this now needs, but still
+  means reaching for an external trigger (e.g. a GitHub Actions cron
+  hitting a webhook route) for anything more precise. Doable, but it's the
+  one place Fly is a worse fit for what this app specifically needs.
 
 None of that changes if you'd rather use Render — the app itself doesn't
 care which host runs it, this is purely about which one makes the
@@ -529,7 +580,11 @@ scheduled-job piece easiest.
    same **Root Directory** (repo root, not `app/`) and **Dockerfile Path**
    (`app/Dockerfile`) as the web service, same reasoning as step 2 above.
 2. Set its **Service Type** to **Cron Job** (Railway's dashboard offers this
-   per-service) with a weekly schedule, e.g. `0 9 * * 1` for Monday 9am UTC.
+   per-service) with a **daily** schedule, e.g. `0 9 * * *` for 9am UTC
+   every day — the script itself skips any shop that isn't due yet per its
+   plan tier (standard: weekly, Team: daily), so a daily schedule is what
+   lets Team shops actually get checked daily without standard shops being
+   checked more often than once a week.
 3. Override its **Start Command** to `npm run cron:weekly-check` instead of
    the image's default `npm run docker-start` CMD — Railway lets you set a
    custom start command per service without changing the Dockerfile. This

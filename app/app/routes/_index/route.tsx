@@ -3,7 +3,7 @@ import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { redirect, Form, Link, useLoaderData } from "react-router";
 
 import { login } from "../../shopify.server";
-import { SUBSCRIPTION_PRICE, SUBSCRIPTION_TRIAL_DAYS } from "../../billing-plan";
+import { SUBSCRIPTION_PRICE, SUBSCRIPTION_PRICE_TEAM, SUBSCRIPTION_TRIAL_DAYS } from "../../billing-plan";
 
 import styles from "./styles.module.css";
 
@@ -181,12 +181,19 @@ const PILLARS = [
 
 const FREE_FEATURES = ["Sync from Shopify", "Full dashboard", "Your own Google Sheet, fully editable"];
 
-const PAID_FEATURES = [
+const STANDARD_FEATURES = [
   "Everything in Free",
+  "Weekly sync",
   "Push changes back to Shopify",
-  "Full history of every push",
-  "One-click Undo",
-  "Weekly email alert (coming soon)",
+  "3 months of push history & one-click Undo",
+];
+
+const TEAM_FEATURES = [
+  "Everything in Standard",
+  "Daily sync",
+  "12 months of push history & Undo",
+  "Email alert when a product's price drops below cost (coming soon)",
+  "Share the Google Sheet with your whole team",
 ];
 
 const FAQ_ITEMS = [
@@ -480,11 +487,12 @@ export default function App() {
             </div>
             <div className={styles.detailText}>
               <p className={styles.sectionEyebrow}>A nudge before it adds up</p>
-              <h3 className={styles.detailHeading}>Weekly email alerts, still rolling out</h3>
+              <h3 className={styles.detailHeading}>Email alerts, still rolling out</h3>
               <p className={styles.detailBody}>
                 Turn this on and Margin Tracker checks in on its own schedule, emailing you only when a
-                product newly drops below cost or under your margin threshold, not a full re-report every
-                week. This feature is still rolling out and isn&apos;t live for every shop yet.
+                product newly crosses under your margin threshold, not a full re-report every check. Team
+                plan shops also get an alert the moment a product&apos;s price drops below its cost. This
+                feature is still rolling out and isn&apos;t live for every shop yet.
               </p>
             </div>
           </div>
@@ -514,15 +522,34 @@ export default function App() {
                 Get started
               </a>
             </div>
-            <div className={`${styles.priceCard} ${styles.priceCardHighlight}`} data-reveal>
-              <h3 className={styles.priceCardTitle}>Margin Tracker</h3>
+            <div className={styles.priceCard} data-reveal>
+              <h3 className={styles.priceCardTitle}>Standard</h3>
               <p className={styles.priceCardPrice}>
                 ${SUBSCRIPTION_PRICE}
                 <span className={styles.priceCardPeriod}>/month</span>
               </p>
               <p className={styles.priceCardTrial}>after a {SUBSCRIPTION_TRIAL_DAYS}-day free trial</p>
               <ul className={styles.priceCardFeatures}>
-                {PAID_FEATURES.map((feature) => (
+                {STANDARD_FEATURES.map((feature) => (
+                  <li key={feature}>
+                    <CheckIcon />
+                    {feature}
+                  </li>
+                ))}
+              </ul>
+              <a className={styles.priceCardCta} href={CONNECT_ANCHOR}>
+                Start free trial
+              </a>
+            </div>
+            <div className={`${styles.priceCard} ${styles.priceCardHighlight} ${styles.priceCardTeam}`} data-reveal>
+              <h3 className={styles.priceCardTitle}>Team</h3>
+              <p className={styles.priceCardPrice}>
+                ${SUBSCRIPTION_PRICE_TEAM}
+                <span className={styles.priceCardPeriod}>/month</span>
+              </p>
+              <p className={styles.priceCardTrial}>after a {SUBSCRIPTION_TRIAL_DAYS}-day free trial</p>
+              <ul className={styles.priceCardFeatures}>
+                {TEAM_FEATURES.map((feature) => (
                   <li key={feature}>
                     <CheckIcon />
                     {feature}

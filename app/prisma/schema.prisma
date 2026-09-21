@@ -115,6 +115,14 @@ model Subscription {
   shopifySubscriptionId String?
   status                String
   isTest                Boolean   @default(false)
+  // "standard" | "team" (see app/billing-plan.ts's PlanTier) — which of the
+  // two Shopify billing plans this shop is on, derived from the plan name
+  // Shopify hands back in billing.check()/billing.request() at billing
+  // confirmation time. Defaults to "standard" for rows created before this
+  // column existed and for the APP_SUBSCRIPTIONS_UPDATE webhook's
+  // create-branch, which has no plan name to go on (see
+  // app/routes/webhooks.app_subscriptions.update.tsx).
+  planTier              String    @default("standard")
   trialEndsAt           DateTime?
   currentPeriodEnd      DateTime?
   updatedAt             DateTime  @updatedAt

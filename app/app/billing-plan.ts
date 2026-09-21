@@ -4,7 +4,32 @@
 // config instead of declaring its own copies.
 export const SUBSCRIPTION_PLAN = "Margin Tracker";
 export const SUBSCRIPTION_PRICE = 15;
+export const SUBSCRIPTION_PLAN_TEAM = "Margin Tracker Team";
+export const SUBSCRIPTION_PRICE_TEAM = 30;
 export const SUBSCRIPTION_TRIAL_DAYS = 14;
+
+export type PlanTier = "standard" | "team";
+
+export interface PlanInfo {
+  tier: PlanTier;
+  name: string;
+  price: number;
+}
+
+/** Keyed by tier so billing config and plan-picker UI can iterate both plans instead of repeating each literal twice. */
+export const PLANS: Record<PlanTier, PlanInfo> = {
+  standard: { tier: "standard", name: SUBSCRIPTION_PLAN, price: SUBSCRIPTION_PRICE },
+  team: { tier: "team", name: SUBSCRIPTION_PLAN_TEAM, price: SUBSCRIPTION_PRICE_TEAM },
+};
+
+/**
+ * Maps a Shopify plan name (from billing.request()/billing.check()'s
+ * AppSubscription.name) to our tier. Anything unrecognized — including no
+ * name at all — resolves to "standard", never a silent Team unlock.
+ */
+export function planTierFromName(name: string | null | undefined): PlanTier {
+  return name === SUBSCRIPTION_PLAN_TEAM ? "team" : "standard";
+}
 
 /**
  * The href for the "Start free trial"/"Resubscribe" button. It must carry
@@ -18,8 +43,8 @@ export const SUBSCRIPTION_TRIAL_DAYS = 14;
  * app/routes/app.billing.start.tsx for the other half of this: `target="_top"`
  * on every place this URL is used as an href.
  */
-export function billingStartUrl(shop: string, host: string | null): string {
-  const params = new URLSearchParams({ shop });
+export function billingStartUrl(shop: string, host: string | null, tier: PlanTier = "standard"): string {
+  const params = new URLSearchParams({ shop, plan: tier });
   if (host) params.set("host", host);
   return `/app/billing/start?${params.toString()}`;
 }
